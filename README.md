@@ -1,5 +1,9 @@
 # DeliveryPulse
 
+[![Tests](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/tests.yml)
+[![Security](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/security.yml/badge.svg)](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/security.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A local, reproducible data-engineering project for a simulated last-mile delivery business. It
 generates messy delivery data with known defects, cleans it with an idempotent batch pipeline,
 loads it into PostgreSQL behind a data-quality gate, and serves analytics. Every defect is
@@ -59,6 +63,8 @@ flowchart LR
 | Containers | Docker Compose (`core` profile) | PostgreSQL bound to `127.0.0.1` |
 | Testing | pytest, pytest-cov | Unit and integration suites, coverage |
 | Quality gates | ruff (lint and format), mypy (strict), gitleaks | `make lint`, `make scan` |
+| Security checks | pip-audit, bandit, Trivy | `make audit`, `make bandit`; Trivy in CI |
+| CI | GitHub Actions | Tests and security workflows on every push and pull request |
 | Task runner | GNU Make | Every command below |
 
 ## Quick start
@@ -130,10 +136,26 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 - **Attribution.** Every test carries exactly one of the two markers; collection stops
   otherwise, so a failure always belongs to one suite.
 
+## Continuous integration
+
+Two GitHub Actions workflows run on every push to `main` and on every pull request. Both use a
+read-only token and no repository secrets. Every action is pinned to a full commit SHA and the
+PostgreSQL image to its digest.
+
+| Workflow | Jobs |
+|---|---|
+| [`tests.yml`](.github/workflows/tests.yml) | Lint and type check (+ workflow validation); unit tests with no services; integration tests and the 80 % coverage gate against PostgreSQL started by `make up` with passwords generated in the job; determinism check (`make generate-check`) on Linux |
+| [`security.yml`](.github/workflows/security.yml) (also weekly) | gitleaks on the working tree and the full git history; pip-audit on every locked package; bandit on `src/`; Trivy on the repository (gating) and on the PostgreSQL image (report only) |
+
+CI generates its own small dataset; no data is committed. Dependabot proposes weekly updates for
+the actions, the Python lockfile and the Compose image. Security reports: [SECURITY.md](SECURITY.md).
+
 ## Repository layout
 
 ```
+├── .github/               CI workflows (tests, security) and Dependabot
 ├── Makefile               every command (make help)
+├── SECURITY.md            how to report a vulnerability
 ├── docker-compose.yml     PostgreSQL (core profile), localhost only
 ├── docker/postgres/       init script: roles, schema, indexes, grants
 ├── sql/                   schema, roles, grants, indexes, analyst queries
@@ -157,7 +179,7 @@ Further reading: [data contracts](docs/data_contracts.md) ·
 ## Known limitations
 
 - **Scope.** Batch only and local only. There is no orchestration, streaming, distributed
-  processing, cloud storage or CI pipeline in this repository.
+  processing or cloud storage in this repository.
 - **The quality gate roughly doubles the load time** (about 60 s of 113.49 s).
   - The checks run with nested-loop joins disabled, because the batch's uncommitted rows have
     no planner statistics.

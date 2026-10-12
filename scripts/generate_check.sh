@@ -45,15 +45,18 @@ for run in run1 run2; do
     echo "Generating ${run}..."
     uv run python -m src.ingestion.generate_data "$@" \
         --raw-dir "${scratch}/${run}/raw" --ground-truth-dir "${scratch}/${run}/ground_truth"
-    (cd "${scratch}/${run}" && find . -type f -print | LC_ALL=C sort | xargs shasum -a 256) \
+    (cd "${scratch}/${run}" && find . -type f -print | LC_ALL=C sort) > "${scratch}/${run}.files"
+    # Fail before hashing if nothing was generated: with no input, GNU xargs (Linux) still runs
+    # the command once and would hash empty stdin, while BSD xargs (macOS) runs nothing.
+    if [ ! -s "${scratch}/${run}.files" ]; then
+        echo "FAIL: no files were generated in ${run}." >&2
+        exit 1
+    fi
+    (cd "${scratch}/${run}" && tr '\n' '\0' < "${scratch}/${run}.files" | xargs -0 shasum -a 256) \
         > "${scratch}/${run}.sha256"
 done
 
 file_count="$(wc -l < "${scratch}/run1.sha256" | tr -d ' ')"
-if [ "$file_count" -eq 0 ]; then
-    echo "FAIL: no files were generated." >&2
-    exit 1
-fi
 if diff -u "${scratch}/run1.sha256" "${scratch}/run2.sha256"; then
     echo "PASS: ${file_count} files are byte-identical across two runs."
 else

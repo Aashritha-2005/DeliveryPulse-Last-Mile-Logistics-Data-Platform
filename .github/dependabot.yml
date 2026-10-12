@@ -1,0 +1,22 @@
+# Weekly dependency updates: GitHub Actions (SHA pins), Python (uv.lock) and the Compose image.
+# The digest-pinned PostgreSQL image in the workflows is updated by hand when the Compose tag
+# changes (see docs/operations.md, "Updating pins").
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

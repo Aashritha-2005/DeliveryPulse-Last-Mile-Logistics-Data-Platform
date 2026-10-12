@@ -236,6 +236,52 @@ tables (by design: see "Roles" below).
 **A database created before the quality framework** (without the two quality audit tables and
 the two `pipeline_runs` window columns) needs the reset procedure once: `make reset-db` (type `DELETE`), `make up`, `make load`.
 
+## Continuous integration and security scanning
+
+Two GitHub Actions workflows run on every push to `main` and every pull request; `security.yml`
+also runs weekly. Both have `permissions: contents: read` and use no repository secrets.
+
+| Workflow | Job | What it runs |
+|---|---|---|
+| `tests.yml` | Lint and type check | `uv sync --locked`, `make lint`, `make actionlint` |
+| | Unit tests (no services) | `make test` |
+| | Integration tests and coverage (PostgreSQL) | `.env` with generated, masked passwords; `make up`; `make test-integration`; `make coverage`; container logs on failure; `make down` |
+| | Determinism check (Linux) | `make generate-check ORDERS=1500 SEED=7` |
+| `security.yml` | Secret scan (gitleaks) | `make scan` (working tree), then `gitleaks git` over the full history |
+| | Dependency audit | `make audit` |
+| | Static analysis | `make bandit` |
+| | Trivy | `trivy fs` on the repository (fails on fixable HIGH/CRITICAL); `trivy image` on the pinned PostgreSQL image (report only, exit code 0) |
+
+Local equivalents (all through `uv run`):
+
+| Command | What it does |
+|---|---|
+| `make audit` | `scripts/pip_audit.sh`: exports the hash-pinned packages from `uv.lock` and runs `pip-audit --strict` on them (the uv environment has no pip) |
+| `make bandit` | `bandit -r src` |
+| `make actionlint` | `actionlint` on `.github/workflows/`, plus a YAML parse of `.github/dependabot.yml` |
+
+**Why CI starts PostgreSQL with `make up`, not a `services:` container.**
+- GitHub service containers start before checkout, so they cannot mount the init script.
+- They also take their passwords from the workflow file, which would put them in the
+  repository.
+- `make up` gives CI exactly the local database: init script, roles, grants and the `_test`
+  database. Passwords are generated in the job with `openssl rand` and masked with
+  `::add-mask::`.
+
+### Updating pins
+
+| Pin | Where | How to verify or update |
+|---|---|---|
+| `actions/checkout` v7.0.1 | both workflows | `git ls-remote https://github.com/actions/checkout refs/tags/v7.0.1` must print the SHA in the `uses:` line |
+| `astral-sh/setup-uv` v10.2.0 | both workflows | `git ls-remote https://github.com/astral-sh/setup-uv refs/tags/v10.2.0` |
+| `aquasecurity/trivy-action` v0.36.0 (annotated tag) | `security.yml` | `git ls-remote https://github.com/aquasecurity/trivy-action 'refs/tags/v0.36.0^{}'`: the peeled commit is the pinned SHA |
+| gitleaks 8.30.1 binary | `security.yml` (`GITLEAKS_SHA256`) | The `gitleaks_8.30.1_linux_x64.tar.gz` line of the release's `gitleaks_8.30.1_checksums.txt` |
+| `postgres:18.6-trixie` digest | `tests.yml`, `security.yml` | `docker buildx imagetools inspect postgres:18.6-trixie`: the top-level `Digest:` (the multi-architecture index) |
+
+Every pin fails safe: a wrong SHA, checksum or digest stops the job rather than running
+something unverified. Dependabot proposes updates for the action pins, `uv.lock` and the
+Compose tag. When the Compose tag changes, update the image digest in both workflows by hand.
+
 ## PostgreSQL (core profile)
 
 | Item | Value |
@@ -311,7 +357,8 @@ memory on the host.
   unprivileged `postgres` user. `no-new-privileges` is set.
 - `read_only` is **not** set: the entrypoint writes to `/var/run/postgresql` and the data
   directory at start-up. Revisit with tmpfs mounts if needed.
-- Image pinned by exact tag; digest pinning is not used.
+- Image pinned by exact tag locally (`POSTGRES_IMAGE` defaults to `postgres:18.6-trixie`); CI
+  sets `POSTGRES_IMAGE` to the same tag pinned by digest (see "Updating pins").
 
 ## Secret scanning
 

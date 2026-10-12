@@ -1,0 +1,116 @@
+# Secret scanning, dependency audit, static analysis and Trivy.
+#
+# Least privilege: read-only token, no repository secrets. Every third-party action is pinned to
+# a full commit SHA (version in the comment); the gitleaks binary is verified against its
+# published sha256; the PostgreSQL image is pinned by digest. Runs weekly as well, so newly
+# published vulnerabilities are found without a code change.
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.13.0"
+
+jobs:
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history for the history scan
+          persist-credentials: false
+      - name: Install gitleaks (sha256 verified)
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" gitleaks
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+      - name: Secret scan, working tree (make scan)
+        run: make scan
+      - name: Secret scan, full git history
+        run: gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose
+
+  audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Audit every locked package (make audit)
+        run: make audit
+
+  bandit:
+    name: Static analysis (bandit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Insecure code patterns in src/ (make bandit)
+        run: make bandit
+
+  trivy:
+    name: Trivy (filesystem and PostgreSQL image)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Filesystem scan (gating)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+      - name: PostgreSQL image scan (report only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # Report only (exit code 0): this is the official third-party postgres image, not one
+          # built here. Its Debian base can carry CVEs that this project cannot fix, which would
+          # turn CI permanently red. The findings stay visible in the job log; the filesystem
+          # scan above, over this project's own lockfile and configuration, is the gate.
+          exit-code: "0"
+          format: table

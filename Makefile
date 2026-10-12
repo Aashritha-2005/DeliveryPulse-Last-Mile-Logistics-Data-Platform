@@ -34,7 +34,7 @@ COVERAGE_MIN ?= 80
 # Admin-only: runs a SQL file inside the container as the bootstrap superuser (index DDL).
 ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f /deliverypulse/sql/$(1)'
 
-.PHONY: help lint format test test-integration coverage scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report
+.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report
 
 help:
 	@echo "DeliveryPulse targets:"
@@ -43,6 +43,9 @@ help:
 	@echo "  make test              unit tests only (no services needed)"
 	@echo "  make test-integration  integration tests (needs 'make up' first)"
 	@echo "  make coverage          unit coverage, then combined unit+integration coverage of src/ (needs 'make up'; fails below COVERAGE_MIN=$(COVERAGE_MIN)%)"
+	@echo "  make audit             pip-audit: known vulnerabilities in every package locked in uv.lock"
+	@echo "  make bandit            bandit: insecure code patterns in src/"
+	@echo "  make actionlint        validate the GitHub Actions workflows and the Dependabot file"
 	@echo "  make scan              gitleaks secret scan of the project directory"
 	@echo "  make scan-selftest     prove gitleaks detects a synthetic secret (scratch dir outside the project)"
 	@echo "  make up                start PostgreSQL (core profile) and wait until healthy"
@@ -84,6 +87,16 @@ test-integration:
 coverage:
 	$(UV_RUN) pytest -m unit --cov=src --cov-report=term
 	$(UV_RUN) pytest -m integration --cov=src --cov-append --cov-report=term-missing --cov-fail-under=$(COVERAGE_MIN)
+
+audit:
+	bash scripts/pip_audit.sh
+
+bandit:
+	$(UV_RUN) bandit -r src
+
+actionlint:
+	$(UV_RUN) actionlint
+	$(UV_RUN) python -c "import yaml; yaml.safe_load(open('.github/dependabot.yml', encoding='utf-8')); print('.github/dependabot.yml: valid YAML')"
 
 scan:
 	@command -v gitleaks >/dev/null 2>&1 || { echo "ERROR: gitleaks not found on PATH. Install it with: brew install gitleaks" >&2; exit 1; }

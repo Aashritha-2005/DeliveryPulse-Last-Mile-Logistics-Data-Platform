@@ -10,7 +10,8 @@ name: deliverypulse
 services:
   postgres:
     # Exact patch release on an explicit Debian base; publishes linux/arm64.
-    image: postgres:18.6-trixie
+    # CI sets POSTGRES_IMAGE to the same tag pinned by digest (.github/workflows/tests.yml).
+    image: ${POSTGRES_IMAGE:-postgres:18.6-trixie}
     profiles: ["core"]
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:?set POSTGRES_SUPERUSER in .env}

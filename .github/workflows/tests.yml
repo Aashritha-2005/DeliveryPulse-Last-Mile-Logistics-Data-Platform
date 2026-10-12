@@ -1,0 +1,116 @@
+# Lint, type check, unit tests, integration tests with coverage, and the determinism check.
+#
+# Least privilege: read-only token, no repository secrets. The database passwords are generated
+# inside the integration job and masked; they never exist in the repository.
+# Every third-party action is pinned to a full commit SHA (version in the comment), and the
+# PostgreSQL image is pinned by digest. How to verify and update pins: docs/operations.md.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.13.0"
+
+jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Lint, format check and mypy (make lint)
+        run: make lint
+      - name: Validate workflows and Dependabot config (make actionlint)
+        run: make actionlint
+
+  unit:
+    name: Unit tests (no services)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Unit tests (make test)
+        run: make test
+
+  integration:
+    name: Integration tests and coverage (PostgreSQL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # postgres:18.6-trixie, pinned to its multi-architecture index digest.
+      POSTGRES_IMAGE: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Create .env with generated, masked passwords
+        run: |
+          cp .env.example .env
+          for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD; do
+            value="$(openssl rand -hex 24)"
+            echo "::add-mask::${value}"
+            sed -i "s/^${name}=CHANGE_ME\$/${name}=${value}/" .env
+          done
+          if grep -q 'CHANGE_ME' .env; then
+            echo "A CHANGE_ME placeholder is left in .env" >&2
+            exit 1
+          fi
+      - name: Start PostgreSQL (make up)
+        run: make up
+      - name: Integration tests (make test-integration)
+        run: make test-integration
+      - name: Coverage, unit + integration, gate 80 % (make coverage)
+        run: make coverage
+      - name: PostgreSQL container logs (on failure)
+        if: failure()
+        run: docker compose --profile core logs postgres
+      - name: Stop PostgreSQL (make down)
+        if: always()
+        run: make down
+
+  determinism:
+    name: Determinism check (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Generate twice and compare sha256 (make generate-check)
+        run: make generate-check ORDERS=1500 SEED=7
