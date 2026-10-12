@@ -29,12 +29,14 @@ LABEL ?= current
 # Quality-check threshold overrides for `make load` and `make quality`, for example
 # QUALITY_ARGS="--threshold raw_duplicate_rows=0.05 --threshold freshness_lag=12".
 QUALITY_ARGS ?=
+# Local port of `make dashboard` (bound to 127.0.0.1 only).
+DASHBOARD_PORT ?= 8501
 # Minimum combined (unit + integration) line coverage of src/ for `make coverage`.
 COVERAGE_MIN ?= 80
 # Admin-only: runs a SQL file inside the container as the bootstrap superuser (index DDL).
 ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f /deliverypulse/sql/$(1)'
 
-.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report
+.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check
 
 help:
 	@echo "DeliveryPulse targets:"
@@ -68,6 +70,8 @@ help:
 	@echo "  make indexes-drop      admin: drop the analytics indexes and ANALYZE (benchmark 'before')"
 	@echo "  make quality           run every data-quality check on the database (exit 1 on a blocking failure)"
 	@echo "  make quality-report    prove every manifest defect type is detected; update $(REPORT)"
+	@echo "  make dashboard         start the Streamlit dashboard on http://127.0.0.1:$(DASHBOARD_PORT) (read-only role; needs 'make up')"
+	@echo "  make dashboard-check   run every dashboard query as the read-only role; print rows and timings"
 
 lint:
 	$(UV_RUN) ruff check .
@@ -165,3 +169,12 @@ quality:
 
 quality-report:
 	$(UV_RUN) python -m src.groundtruth.quality_coverage --raw-dir $(RAW_DIR) --ground-truth-dir $(GROUND_TRUTH_DIR) --report $(REPORT) $(DATASET_ARG)
+
+# Localhost only, Streamlit usage statistics off, no source-file watching, minimal toolbar (no
+# "Deploy" button); XSRF and CORS protections stay at their defaults.
+# PYTHONPATH makes the project's `src` package importable from the app script.
+dashboard:
+	PYTHONPATH=$(CURDIR) $(UV_RUN) streamlit run src/dashboard/app.py --server.address 127.0.0.1 --server.port $(DASHBOARD_PORT) --server.headless true --server.fileWatcherType none --client.toolbarMode minimal --browser.gatherUsageStats false
+
+dashboard-check:
+	$(UV_RUN) python -m src.dashboard.data

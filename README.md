@@ -12,6 +12,11 @@ accounted for row by row, and every number below was measured on this repository
 **All data is synthetic.** It is generated locally by `make generate` from a fixed seed and is
 not committed. No real people, addresses, phone numbers or GPS traces are used.
 
+![DeliveryPulse dashboard: KPIs, delivery time trend, late-delivery rate by city, peak hours and top drivers](docs/images/dashboard.png)
+
+*The dashboard (`make dashboard`) on the default dataset: 49,450 orders, 2026-09-10 to
+2026-09-30, read through the read-only database role.*
+
 ## Architecture
 
 ```mermaid
@@ -30,6 +35,7 @@ flowchart LR
     L --> PG
     L -.->|quality gate inside the batch transaction| Q
     A --> AN["make analytics / make explain<br/>read-only role"]
+    A --> DB["make dashboard<br/>Streamlit, read-only role"]
     GT --> REC["make reconcile-db / make quality-report<br/>tests and reports only"]
     Q --> REC
 ```
@@ -47,6 +53,13 @@ flowchart LR
 - **Quality gate.** 35 checks (50 results) run inside each batch transaction: blocking
   integrity checks, plus raw-layer detection checks that re-derive every defect independently.
   A blocking failure rolls the batch back and records the evidence.
+- **Dashboard.** A Streamlit page on `127.0.0.1:8501`, connected as the read-only role. It
+  shows, for a date range and a set of cities:
+  - headline KPIs;
+  - the daily delivery-time trend per city;
+  - the late-delivery rate by city (recomputed from counts);
+  - orders by hour of day;
+  - the fastest drivers with their utilisation.
 
 ## Tech stack
 
@@ -60,6 +73,7 @@ flowchart LR
 | Database | PostgreSQL 18.6 (`postgres:18.6-trixie`) | `raw` / `staging` / `analytics` / `audit` schemas |
 | Driver | psycopg 3 | Parameterised SQL, `COPY` bulk loads |
 | Configuration | python-dotenv | Settings and passwords from a git-ignored `.env` |
+| Dashboard | Streamlit 1.64 (built-in charts) | `make dashboard`; pandas, Altair and PyArrow 25 arrive only as Streamlit's dependencies, and the pipeline itself does not use pandas |
 | Containers | Docker Compose (`core` profile) | PostgreSQL bound to `127.0.0.1` |
 | Testing | pytest, pytest-cov | Unit and integration suites, coverage |
 | Quality gates | ruff (lint and format), mypy (strict), gitleaks | `make lint`, `make scan` |
@@ -81,6 +95,7 @@ make load                     # clean and load all batches through the quality g
 make reconcile-db             # compare stored dispositions with the defect manifest
 make quality                  # run every quality check on the database
 make analytics                # run the analyst queries as the read-only role
+make dashboard                # open http://127.0.0.1:8501 (Ctrl+C to stop)
 make test-integration         # integration tests against PostgreSQL
 make coverage                 # unit-only, then combined coverage of src/
 make down                     # stop services (keeps the data volume)
@@ -107,8 +122,9 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 | Reloading the same batches | no-op; row counts identical before and after |
 | Incremental metric refresh vs full rebuild | identical row counts (`make metrics`) |
 | Index tuning, `order_event_summary` (median of 3) | 72.487 ms to 25.323 ms ([benchmarks](docs/benchmarks.md)) |
-| Tests | 307 unit (no services, 5.27 s) and 140 integration (75.02 s) |
-| Coverage of `src/` (`make coverage`) | 77 % unit only; 86.75 % combined, with no exclusions |
+| Dashboard queries as the read-only role (`make dashboard-check`) | 7 queries in 0.10 s on the full dataset; max RSS 76,120,064 bytes |
+| Tests | 334 unit (no services, 8.92 s) and 145 integration (91.48 s) |
+| Coverage of `src/` (`make coverage`) | 77 % unit only; 86.41 % combined, with no exclusions |
 
 ## Data quality
 
@@ -158,12 +174,13 @@ the actions, the Python lockfile and the Compose image. Security reports: [SECUR
 ├── SECURITY.md            how to report a vulnerability
 ├── docker-compose.yml     PostgreSQL (core profile), localhost only
 ├── docker/postgres/       init script: roles, schema, indexes, grants
-├── sql/                   schema, roles, grants, indexes, analyst queries
+├── sql/                   schema, roles, grants, indexes, analyst and dashboard queries
 ├── src/
 │   ├── ingestion/         seeded generator and defect injection
 │   ├── transformations/   validation, dispositions, GPS rules, Parquet output
 │   ├── database/          idempotent loader, metrics refresh, analytics runner
 │   ├── quality/           data-quality checks and the quality gate
+│   ├── dashboard/         Streamlit dashboard (read-only role) and its data access
 │   └── groundtruth/       manifest verification and reconciliation (tests and reports only)
 ├── tests/
 │   ├── unit/              no services
@@ -191,5 +208,11 @@ Further reading: [data contracts](docs/data_contracts.md) ·
   (documented in the data contract).
 - **Driver utilisation above 100 %** is stored as computed, not capped. The quality check
   reports it, except while a shift session is still open at a batch cutoff.
+- **Driver utilisation is low:** 3.75 % to 22.76 % per driver over the whole period, median
+  12.14 %. The generator sizes the fleet generously to keep no-free-driver cancellations under
+  5 %; this reflects the synthetic data, not a pipeline issue.
+- **The dashboard is a local tool.** It is bound to `127.0.0.1` with no login, and reads
+  synthetic data through the read-only role. Streamlit's XSRF and CORS protections stay at
+  their defaults.
 - **Coverage.** Unit-only coverage is 77 %. The command-line entry points and report writers
   are exercised by `make` targets rather than by pytest.

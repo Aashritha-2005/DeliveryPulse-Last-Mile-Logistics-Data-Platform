@@ -236,6 +236,31 @@ tables (by design: see "Roles" below).
 **A database created before the quality framework** (without the two quality audit tables and
 the two `pipeline_runs` window columns) needs the reset procedure once: `make reset-db` (type `DELETE`), `make up`, `make load`.
 
+## Dashboard
+
+Needs `make up` and a loaded database.
+
+| Command | Role | What it does |
+|---|---|---|
+| `make dashboard` | `deliverypulse_readonly` | Starts the Streamlit dashboard on `http://127.0.0.1:8501` (Ctrl+C stops it). Change the port with `DASHBOARD_PORT=8502` |
+| `make dashboard-check` | `deliverypulse_readonly` | Runs every dashboard query once with the default filters, without a browser; prints rows and milliseconds per query; exits 1 on any error |
+
+- **Queries.** `sql/dashboard.sql`, reading the `analytics` schema only, with every value bound
+  as a parameter. Code: `src/dashboard/data.py` (data access, rates from counts) and
+  `src/dashboard/app.py` (layout).
+- **Server flags** (in the Makefile):
+  - localhost only (`--server.address 127.0.0.1`);
+  - usage statistics off (`--browser.gatherUsageStats false`);
+  - no source-file watching (`--server.fileWatcherType none`);
+  - minimal toolbar (`--client.toolbarMode minimal`).
+
+  Streamlit's XSRF and CORS protections stay at their defaults.
+- **Errors never show connection details:** "Cannot reach the database" means PostgreSQL is not
+  running (`make up`); "No data loaded yet" means run `make generate` and `make load`.
+- **Caching.** Query results are cached for 60 s per filter combination
+  (`st.cache_data`), so a reload within a minute does not query the database again.
+- **pandas** is installed only as a Streamlit dependency; the pipeline does not use it.
+
 ## Continuous integration and security scanning
 
 Two GitHub Actions workflows run on every push to `main` and every pull request; `security.yml`
@@ -393,6 +418,7 @@ memory on the host.
 | Container log: `10-init-deliverypulse.sh: /usr/bin/env: bad interpreter: Permission denied` | Cause (seen 2026-10-11): the init script had host mode `-rw-r--r--` (no execute bit); inside the container it showed as `-rw-r--r-- 0 0`. The entrypoint still logged `running` rather than `sourcing`, so its `[ -x ]` check returned true while the actual exec was refused, most likely because Docker Desktop's file sharing answered the access check. Do not rely on the entrypoint's sourcing fallback; keep the script executable. Same fix as the row above. **Publishing:** git stores the execute bit, so commit the file as executable and check with `git ls-files -s docker/postgres/init-deliverypulse.sh`; the mode must be `100755` |
 | `make load`: `column "..." of relation "daily_delivery_metrics" does not exist` or a syntax error near `old` | The database was initialised with an older schema (before the metrics layer), or the image is older than PostgreSQL 18. Run `make db-status` to check the version; reset with `make reset-db` (type `DELETE`), `make up`, `make load` |
 | `make explain`: `analytics.orders is empty` | Load first: `make load` |
+| `make dashboard`: "port 8501 is already in use" or the page does not load | Another dashboard is running; stop it (Ctrl+C) or use `make dashboard DASHBOARD_PORT=8502` |
 | `make load` exits 1 with `quality gate: <check>` | A blocking quality check failed; the batch was rolled back. See "Recovery after a quality-gate failure" above |
 | `make load`: `column "window_start" ... does not exist` or `relation "audit.quality_runs" does not exist` | The database predates the quality framework. Reset: `make reset-db` (type `DELETE`), `make up`, `make load` |
 | `make quality-report`: `load-time quality results exist for batches ...` | Some batches were loaded before the quality framework existed, or failed; reset and load again |
