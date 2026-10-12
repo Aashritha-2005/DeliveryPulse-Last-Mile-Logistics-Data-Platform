@@ -171,7 +171,3 @@ Further reading: [data contracts](docs/data_contracts.md) ·
   reports it, except while a shift session is still open at a batch cutoff.
 - **Coverage.** Unit-only coverage is 77 %. The command-line entry points and report writers
   are exercised by `make` targets rather than by pytest.
-
-## License
-
-[MIT](LICENSE).
