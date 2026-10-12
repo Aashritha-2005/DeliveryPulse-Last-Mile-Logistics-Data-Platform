@@ -1,7 +1,7 @@
 # Operations
 
-How to set up, run and troubleshoot DeliveryPulse locally. This document grows with each task
-(recovery after a failed batch and log locations arrive with the tasks that introduce them).
+How to set up, run and troubleshoot DeliveryPulse locally: environment, commands per component,
+recovery after a failed batch, the database lifecycle and troubleshooting.
 
 ## Verified local environment (recorded 2026-10-11)
 
@@ -11,7 +11,7 @@ The machine every measurement in this repository was taken on.
 |---|---|---|
 | Machine | MacBook Pro, Apple Silicon (`arm64`), macOS 26 Tahoe, zsh | Every Docker image used must publish a `linux/arm64` variant |
 | Homebrew | 6.0.9, prefix `/opt/homebrew` | Tools live in `/opt/homebrew/bin` |
-| uv | 0.13.0 via Homebrew, already installed | Hand-over commands skip the uv install step and start at `uv lock` |
+| uv | 0.13.0 via Homebrew | Setup starts at `uv sync --locked` (the lockfile is committed) |
 | Python | 3.12, uv-managed only (3.12.10 at `~/.local/share/uv/python/`) | `requires-python = ">=3.12,<3.13"`; `.python-version` containing `3.12`; `[tool.uv] python-preference = "only-managed"` in `pyproject.toml`. The machine also has Homebrew, python.org, pyenv and Apple Pythons; never use them |
 | make | GNU Make 3.81 (Apple Command Line Tools) | The Makefile must run on 3.81: no `.ONESHELL`, `.SHELLFLAGS`, `undefine`, `$(file ...)`, `!=`, or `--output-sync`. Each recipe line runs in its own shell; put multi-step logic in `scripts/*.sh` or join lines with `&& \`. The same Makefile must also work on GNU Make 4.x (CI on Linux) |
 | Secret scanner | gitleaks 8.30.1 via Homebrew; not a Python dependency | See "Secret scan design" below |
@@ -57,7 +57,7 @@ database"). So a failure in `make test` is always a unit failure, never a missin
 | `make db-status` | Prints `PGDATA`, server version, `system_identifier`, timezone and project schemas |
 | `make reset-db` | **Deletes all database data** after you type `DELETE` (see below) |
 
-## Synthetic data (Task 3)
+## Synthetic data
 
 Needs no Docker and no `.env`. The contract is in `docs/data_contracts.md`.
 
@@ -86,7 +86,7 @@ Needs no Docker and no `.env`. The contract is in `docs/data_contracts.md`.
   Python version. NumPy does not promise identical random streams across versions.
 - **Concurrency:** do not run two generators into the same folders at the same time.
 
-## Transform (Task 4)
+## Transform
 
 Needs no Docker and no `.env`. The rules are in `docs/data_contracts.md`, sections 6 and 7.
 
@@ -118,7 +118,7 @@ Behaviour:
 - **Thresholds** can be changed with
   `uv run python -m src.transformations.transform --max-speed-kmh 120 --orphan-max-age-batches 2`.
 
-## Database load (Task 5)
+## Database load
 
 Needs `make up`. Connects as `deliverypulse_etl` only, never as the superuser.
 
@@ -128,7 +128,7 @@ Needs `make up`. Connects as `deliverypulse_etl` only, never as the superuser.
 | `make reconcile-db` | Compares the dispositions stored in `audit.record_dispositions` / `audit.pending_resolutions` with the defect manifest; exits 1 on any mismatch |
 | `make db-counts` | Row count of every table in `raw`, `staging`, `analytics`, `audit`, plus the database size |
 
-`make transform` (Task 4) stays as it is: the offline path with local state and Parquet
+`make transform` is the offline path with local state and Parquet
 output. `make load` is the database path. Both run the same `process_batch`, and an integration
 test proves they give identical dispositions.
 
@@ -138,7 +138,7 @@ All three run on one connection, as nested `conn.transaction()` blocks:
 | Block | Commits | Contents |
 |---|---|---|
 | A | on its own, before the batch | Leftover `started` audit rows of the batch become `failed` with `failure_reason = 'abandoned'`; four new `started` rows (one per source) with `attempt = previous + 1` |
-| B | all or nothing | Raw rows, `audit.record_dispositions`, `staging.rejected_records`, the pending queue (`staging.pending_events` replaced), `audit.pending_resolutions`, analytics upserts, pipeline state (`staging.record_state`, `staging.gps_reference`), the refresh of dimensions and aggregates for the affected reporting dates (Task 6), and the four audit rows set to `succeeded` |
+| B | all or nothing | Raw rows, `audit.record_dispositions`, `staging.rejected_records`, the pending queue (`staging.pending_events` replaced), `audit.pending_resolutions`, analytics upserts, pipeline state (`staging.record_state`, `staging.gps_reference`), the refresh of dimensions and aggregates for the affected reporting dates, the quality checks, and the four audit rows set to `succeeded` |
 | C | on its own, only if B failed | The four audit rows set to `failed` with `failure_reason`, `rows_failed = rows_input` and every other counter 0 (nothing of B was committed) |
 
 - **Bulk writes use COPY.** Analytics upserts go through temporary tables:
@@ -174,8 +174,7 @@ alone (it asks you to type `DELETE`; development data only), then `make up` and 
 
 ### Test database and test isolation
 - The init script creates a second database, `<POSTGRES_DB>_test`, with the same schema and
-  grants. It is created only on first initialisation, so it needs `make reset-db` once after
-  Task 5.
+  grants. It is created only on first initialisation of the data volume.
 - Load integration tests connect to it as `deliverypulse_etl` and run inside an outer
   transaction that is always rolled back. The load's blocks A, B and C become savepoints, so
   nothing is ever committed there.
@@ -183,7 +182,7 @@ alone (it asks you to type `DELETE`; development data only), then `make up` and 
   that every table is empty again.
 - The schema and role tests keep using the main database.
 
-## Analytics and query tuning (Task 6)
+## Analytics and query tuning
 
 Needs `make up` and a loaded database. Definitions: `docs/data_model.md`.
 
@@ -204,11 +203,11 @@ Needs `make up` and a loaded database. Definitions: `docs/data_model.md`.
   environment; no password is passed or printed) and switch to the
   owner role, because no application role may run DDL. The indexes are also created at first
   initialisation, so a normal setup already has them.
-- **Schema changes in Task 6** (new aggregate columns) need the reset procedure once:
-  `make reset-db` (type `DELETE`), `make up`, `make load`.
+- **A database created with an older schema** (without the aggregate count columns) needs the
+  reset procedure once: `make reset-db` (type `DELETE`), `make up`, `make load`.
 - **Benchmark protocol:** see `docs/benchmarks.md`.
 
-## Data quality (Task 7)
+## Data quality
 
 Needs `make up`. Check catalogue and rules: `docs/data_contracts.md` section 11.
 
@@ -232,10 +231,10 @@ uncommitted rows. PostgreSQL has no statistics for them, so it estimates about o
 nested-loop plan becomes quadratic. Measured before the fix: `raw_parent_after_children` took
 35 s instead of 0.4 s. The suite therefore runs with `SET LOCAL enable_nestloop = off`, restored
 right after. `ANALYZE` inside the transaction would also work, but the ETL role does not own the
-tables (by design, Task 2).
+tables (by design: see "Roles" below).
 
-**Schema change in Task 7:** two new audit tables and two `pipeline_runs` columns. This needs
-the reset procedure once: `make reset-db` (type `DELETE`), `make up`, `make load`.
+**A database created before the quality framework** (without the two quality audit tables and
+the two `pipeline_runs` window columns) needs the reset procedure once: `make reset-db` (type `DELETE`), `make up`, `make load`.
 
 ## PostgreSQL (core profile)
 
@@ -269,7 +268,7 @@ Exact privileges are in `sql/grants.sql` and enforced by `tests/integration/test
 - **The role passwords are present in the container environment** (they are passed in for the
   init script) and are therefore visible to anyone who can run `docker inspect` on this machine.
   This is acceptable for local development only. A shared or production deployment would use
-  Docker secrets or a secret manager instead (Kubernetes Secrets arrive in Task 16).
+  Docker secrets or a secret manager instead.
 
 ### Init scripts run only once
 
@@ -312,7 +311,7 @@ memory on the host.
   unprivileged `postgres` user. `no-new-privileges` is set.
 - `read_only` is **not** set: the entrypoint writes to `/var/run/postgresql` and the data
   directory at start-up. Revisit with tmpfs mounts if needed.
-- Image pinned by exact tag; digest pinning is added for CI images in Task 9.
+- Image pinned by exact tag; digest pinning is not used.
 
 ## Secret scanning
 
@@ -345,9 +344,9 @@ memory on the host.
 | Integration tests: `Cannot connect to PostgreSQL` | `make up`, then `docker compose --profile core ps` |
 | `make up` fails with `init-deliverypulse.sh is not executable` | Guard added after a real failure. Run `chmod 755 docker/postgres/init-deliverypulse.sh`. If an earlier start already ran initdb, the volume is partly initialised (cluster and database exist; roles and schemas do not), so also run `make reset-db` (type `DELETE`) before `make up` |
 | Container log: `10-init-deliverypulse.sh: /usr/bin/env: bad interpreter: Permission denied` | Cause (seen 2026-10-11): the init script had host mode `-rw-r--r--` (no execute bit); inside the container it showed as `-rw-r--r-- 0 0`. The entrypoint still logged `running` rather than `sourcing`, so its `[ -x ]` check returned true while the actual exec was refused, most likely because Docker Desktop's file sharing answered the access check. Do not rely on the entrypoint's sourcing fallback; keep the script executable. Same fix as the row above. **Publishing:** git stores the execute bit, so commit the file as executable and check with `git ls-files -s docker/postgres/init-deliverypulse.sh`; the mode must be `100755` |
-| `make load`: `column "..." of relation "daily_delivery_metrics" does not exist` or a syntax error near `old` | The database was initialised before Task 6 (old schema), or the image is older than PostgreSQL 18. Run `make db-status` to check the version; reset with `make reset-db` (type `DELETE`), `make up`, `make load` |
+| `make load`: `column "..." of relation "daily_delivery_metrics" does not exist` or a syntax error near `old` | The database was initialised with an older schema (before the metrics layer), or the image is older than PostgreSQL 18. Run `make db-status` to check the version; reset with `make reset-db` (type `DELETE`), `make up`, `make load` |
 | `make explain`: `analytics.orders is empty` | Load first: `make load` |
 | `make load` exits 1 with `quality gate: <check>` | A blocking quality check failed; the batch was rolled back. See "Recovery after a quality-gate failure" above |
-| `make load`: `column "window_start" ... does not exist` or `relation "audit.quality_runs" does not exist` | The database predates Task 7. Reset: `make reset-db` (type `DELETE`), `make up`, `make load` |
-| `make quality-report`: `load-time quality results exist for batches ...` | Some batches were loaded before Task 7 or failed; reset and load again |
+| `make load`: `column "window_start" ... does not exist` or `relation "audit.quality_runs" does not exist` | The database predates the quality framework. Reset: `make reset-db` (type `DELETE`), `make up`, `make load` |
+| `make quality-report`: `load-time quality results exist for batches ...` | Some batches were loaded before the quality framework existed, or failed; reset and load again |
 | Container fails at start with a permission or `chown` error | The capability set is too tight for this Docker version: `docker compose --profile core logs postgres` and report the error |

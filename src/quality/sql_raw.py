@@ -1,4 +1,4 @@
-"""SQL of the raw-layer detection checks (Task 7).
+"""SQL of the raw-layer detection checks of the quality framework.
 
 Each query re-derives one kind of defect from the raw text of the batches in
 ``%(batch_ids)s``, without reading the pipeline's dispositions. Every query returns one row per

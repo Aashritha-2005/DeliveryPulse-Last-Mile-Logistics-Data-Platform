@@ -1,5 +1,5 @@
 # DeliveryPulse services. Start only the profile you need (memory per profile: docs/operations.md):
-#   core: PostgreSQL analytics store (Task 2)
+#   core: PostgreSQL analytics store
 # Never run several heavy profiles at once on an 8 GB machine.
 #
 # All credentials come from .env (git-ignored). `${VAR:?message}` makes Compose refuse to

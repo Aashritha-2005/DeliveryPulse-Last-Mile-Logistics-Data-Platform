@@ -1,10 +1,10 @@
 # Benchmarks
 
-Every number on this page comes from a real run on the user's machine, with the command,
+Every number on this page comes from a real run on the reference machine, with the command,
 dataset, date and hardware recorded next to it. Nothing is estimated. A section without numbers
 has not been measured yet.
 
-## 1. Query tuning with indexes (Task 6)
+## 1. Query tuning with indexes (metrics and analytics layer)
 
 **Status:** run 1 (section 1.5) and run 2 (section 1.6) measured. Run 2 is the current
 index set.
@@ -62,7 +62,7 @@ same parameters.
 
 | Item | Value |
 |---|---|
-| Date | 2026-10-12, reported by the user |
+| Date | 2026-10-12, measured on the reference run |
 | Hardware | MacBook Pro, Apple Silicon (`arm64`), macOS 26, 16 GiB RAM; Docker Desktop VM ~7.7 GiB; PostgreSQL container `mem_limit` 1 GiB, default settings (`shared_buffers` 128 MB) |
 | PostgreSQL | 18.6 (`postgres:18.6-trixie`) |
 | Dataset | `seed-42_orders-50000_cfg-449e309b`: 49,450 orders, 439,822 delivery events, 48,947 shift events, 828 drivers |
@@ -114,7 +114,7 @@ What the numbers mean:
     (section 1.6).
 
 Run 2 overwrote the run-1 files `docs/benchmarks/explain-{before,after}.*` (same labels). The
-run-1 numbers above are as the user reported them.
+run-1 numbers above were recorded from that run's console output.
 
 ### 1.6 Results, run 2 (2026-10-12): current index set
 
@@ -165,12 +165,12 @@ What run 2 shows:
 
 | Run | Real time | Batch 1 | Batch 2 | Batch 3 | Max resident set size |
 |---|---:|---:|---:|---:|---:|
-| Task 5 (no metric refresh, no analytics indexes) | 53.26 s | 16.06 s | 18.87 s | 16.93 s | 602,423,296 bytes |
-| Task 6 (refresh in each batch transaction, analytics indexes present) | 55.80 s | 17.12 s | 19.14 s | 17.93 s | 620,953,600 bytes |
+| Loader only (no metric refresh, no analytics indexes) | 53.26 s | 16.06 s | 18.87 s | 16.93 s | 602,423,296 bytes |
+| With the metrics layer (refresh in each batch transaction, analytics indexes present) | 55.80 s | 17.12 s | 19.14 s | 17.93 s | 620,953,600 bytes |
 | Difference | +2.54 s (+4.8 %) | +1.06 s | +0.27 s | +1.00 s | +18,530,304 bytes (~17.7 MiB) |
 
 - The difference includes both the metric refresh and maintaining the five analytics indexes
-  during the load (Task 5 had neither). This run cannot separate the two.
+  during the load (the loader-only run had neither). This run cannot separate the two.
 - A full rebuild (`make metrics`) of all 21 dates gave the same row counts as the incremental
   path: `daily_delivery_metrics` 105, `driver_performance` 12,345. In run 1, `dim_date` had 23
   rows: the incremental path had added 2026-09-09 and 2026-10-01 (shift dates ±1 day), and the

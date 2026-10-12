@@ -17,7 +17,7 @@
 -- ---------------------------------------------------------------- database ---
 REVOKE ALL ON DATABASE :"dbname" FROM PUBLIC;
 GRANT CONNECT ON DATABASE :"dbname" TO deliverypulse_etl, deliverypulse_readonly;
--- Temporary tables for per-batch loading work (Task 5).
+-- Temporary tables for per-batch loading work (the loader).
 GRANT TEMPORARY ON DATABASE :"dbname" TO deliverypulse_etl;
 ALTER DATABASE :"dbname" SET timezone TO 'UTC';
 

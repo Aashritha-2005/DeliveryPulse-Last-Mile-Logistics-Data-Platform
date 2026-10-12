@@ -3,8 +3,8 @@
 Dispositions depend on what earlier batches did: accepted drivers and order versions, event ids
 already seen, accepted GPS pings per driver, and pending orphans. :class:`PipelineState` is the
 interface the pipeline uses. :class:`LocalState` keeps it in memory and saves it as Parquet
-under ``data/processed/<dataset>/state/`` after each batch. Task 5 adds a PostgreSQL
-implementation of the same interface.
+under ``data/processed/<dataset>/state/`` after each batch. ``PostgresState``
+(``src/database/postgres_state.py``) implements the same interface for the database load.
 """
 
 import bisect

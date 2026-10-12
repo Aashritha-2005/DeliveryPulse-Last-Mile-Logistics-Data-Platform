@@ -1,7 +1,8 @@
 # Data contracts
 
 The contract between the synthetic source (`src/ingestion/generate_data.py`) and the pipeline
-(Task 4 onwards). The constants live in `src/ingestion/generator_config.py`. A unit test checks
+(transform, load and quality checks). The constants live in `src/contract.py` (re-exported by
+`src/ingestion/generator_config.py` for the generator). A unit test checks
 that the accepted values below equal the CHECK constraints in `sql/schema.sql`.
 
 All data is synthetic. City centres are public reference points; every other coordinate is
@@ -208,7 +209,8 @@ of that state.
     is kept unchanged.
   - **Rationale:** a deterministic, auditable outcome with no silent overwrite. Upstream must send
     a newer `source_updated_at` to correct a record.
-  - The generator does not inject this case; it is defined here for Task 4.
+  - The generator does not inject this case; the rule is defined for the transform and covered
+    by unit tests.
 - **Several versions of one order in the same batch, with different `source_updated_at`:** the
   newest valid row is processed and older rows are `stale_ignored`. Not generated.
 
@@ -359,7 +361,8 @@ Derived order columns, following section 5:
 - `is_late` = `delivery_ts > promised_ts`, for delivered orders only; `NULL` otherwise.
 
 Rejected and pending records are written per batch as `rejected_records.parquet` and
-`pending_events.parquet`, shaped like the staging tables, and loaded into PostgreSQL in Task 5.
+`pending_events.parquet`, shaped like the staging tables. `make load` writes the same records to
+PostgreSQL directly.
 
 ## 8. Schema changes
 

@@ -1,4 +1,4 @@
-"""Smoke tests proving the Task 1 toolchain works: interpreter version and package import."""
+"""Smoke tests proving the toolchain works: interpreter version and package import."""
 
 import importlib
 import sys

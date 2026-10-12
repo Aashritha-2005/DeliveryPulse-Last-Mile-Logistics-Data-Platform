@@ -158,7 +158,7 @@ CREATE TABLE staging.gps_reference (
 
 -- =============================================================== analytics ===
 -- Star schema: orders and delivery_events are facts; drivers, dim_date and dim_city are
--- dimensions. Accepted-value lists are provisional until the Task 3 data contract.
+-- dimensions. Accepted-value lists equal those in src/contract.py (a unit test checks this).
 
 CREATE TABLE analytics.dim_date (
     date_key        date     PRIMARY KEY,
@@ -396,7 +396,7 @@ CREATE TABLE audit.pending_resolutions (
     PRIMARY KEY (source, record_key)
 );
 
--- Data-quality runs (Task 7): one row per evaluation of the check suite. A load evaluates it
+-- Data-quality runs: one row per evaluation of the check suite. A load evaluates it
 -- once per batch attempt (triggered_by 'load'); `make quality` evaluates the whole database
 -- (triggered_by 'manual', batch_id NULL). Stored even when the gate blocks the batch.
 CREATE TABLE audit.quality_runs (

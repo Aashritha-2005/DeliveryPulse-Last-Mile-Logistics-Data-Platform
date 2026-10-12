@@ -1,6 +1,6 @@
-# Minimal Task 1 hooks: ruff only. NOT installed or activated yet.
+# Minimal hooks: ruff only. Not installed or activated by default (`pre-commit install`).
 # Local hooks reuse the ruff version locked in uv.lock (no second ruff copy).
-# Secret-scanning and security hooks are added in Task 9.
+# Secret scanning runs through `make scan` (gitleaks), not as a hook.
 repos:
   - repo: local
     hooks:

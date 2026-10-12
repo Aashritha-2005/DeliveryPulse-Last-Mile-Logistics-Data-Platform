@@ -1,4 +1,4 @@
-"""SQL of the staging, audit and analytics integrity checks (Task 7).
+"""SQL of the staging, audit and analytics integrity checks of the quality framework.
 
 None of these repeats a database constraint (a check that a constraint already enforces could
 never fail). Every query returns ``(instance, failing_rows, rows_checked, sample_keys,
