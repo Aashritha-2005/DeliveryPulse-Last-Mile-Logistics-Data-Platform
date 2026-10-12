@@ -1,0 +1,17 @@
+# Keep secrets, VCS metadata, local environments and data out of images.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.git/
+.venv/
+data/
+*.parquet
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.DS_Store

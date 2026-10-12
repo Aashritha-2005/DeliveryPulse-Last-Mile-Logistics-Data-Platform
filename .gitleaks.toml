@@ -1,0 +1,29 @@
+# gitleaks configuration for DeliveryPulse (gitleaks 8.30.x).
+#
+# Extends the built-in default rules. The allowlist covers only:
+#   - generated paths: virtualenv, VCS metadata, tool caches, generated data
+#   - the local `.env` file at the project root (see below)
+# Never add source, config or docs paths here.
+#
+# Why `.env` is allowlisted: it is the git-ignored local settings file that
+# holds this machine's real values and is never published. Scanning it would
+# flag legitimate local credentials on every run. `.env.example`, which IS
+# published, is NOT allowlisted and stays scanned. The pattern matches only
+# the root `.env`; any other `.env` file elsewhere is still scanned.
+
+title = "DeliveryPulse gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated paths and the git-ignored local .env file"
+paths = [
+    '''(^|/)\.venv/''',
+    '''(^|/)\.git/''',
+    '''^(\./)?data/''',
+    '''(^|/)\.ruff_cache/''',
+    '''(^|/)\.mypy_cache/''',
+    '''(^|/)\.pytest_cache/''',
+    '''^(\./)?\.env$''',
+]

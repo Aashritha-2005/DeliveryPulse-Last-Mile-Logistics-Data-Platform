@@ -1,0 +1,48 @@
+"""Shared unit-test fixtures: small generated datasets in temporary folders (no services).
+
+Unit tests never touch a database: an autouse fixture makes ``psycopg.connect`` fail loudly,
+so a unit test that needs PostgreSQL fails with a clear message instead of passing or
+failing depending on whether the database happens to be running.
+"""
+
+from collections.abc import Iterator
+from typing import NoReturn
+
+import psycopg
+import pytest
+
+from src.ingestion.generator_config import GeneratorConfig
+from tests.unit.generated import SMALL_ORDERS, SMALL_SEED, GeneratedDataset, generate_into
+
+NO_DATABASE = "unit tests must not connect to a database"
+
+
+def _refuse_connection(*_: object, **__: object) -> NoReturn:
+    raise AssertionError(NO_DATABASE)
+
+
+@pytest.fixture(autouse=True)
+def no_database(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every unit test runs with database connections refused."""
+    monkeypatch.setattr(psycopg, "connect", _refuse_connection)
+    monkeypatch.setattr(psycopg.Connection, "connect", _refuse_connection)
+    yield
+
+
+@pytest.fixture(scope="session")
+def small_config() -> GeneratorConfig:
+    return GeneratorConfig.create(orders=SMALL_ORDERS, seed=SMALL_SEED)
+
+
+@pytest.fixture(scope="session")
+def dataset_a(
+    tmp_path_factory: pytest.TempPathFactory, small_config: GeneratorConfig
+) -> GeneratedDataset:
+    return generate_into(tmp_path_factory.mktemp("generated_a"), small_config)
+
+
+@pytest.fixture(scope="session")
+def dataset_b(
+    tmp_path_factory: pytest.TempPathFactory, small_config: GeneratorConfig
+) -> GeneratedDataset:
+    return generate_into(tmp_path_factory.mktemp("generated_b"), small_config)

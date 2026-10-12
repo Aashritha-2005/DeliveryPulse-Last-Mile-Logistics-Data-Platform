@@ -1,0 +1,117 @@
+{
+  "data_period": [
+    "2026-09-10",
+    "2026-09-30"
+  ],
+  "dataset": "seed-42_orders-50000_cfg-449e309b",
+  "label": "after",
+  "measured_runs_per_query": 3,
+  "postgresql_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+  "queries": [
+    {
+      "execution_ms_runs": [
+        26.463,
+        26.333,
+        25.856
+      ],
+      "median_execution_ms": 26.333,
+      "median_planning_ms": 0.122,
+      "parameters": "{\"end_date\": \"2026-09-30\", \"limit\": 10, \"min_deliveries\": 5, \"start_date\": \"2026-09-10\", \"tz\": \"Asia/Kolkata\"}",
+      "query": "peak_hours",
+      "scans": [
+        "Index Only Scan orders_created_ts_idx",
+        "Subquery Scan"
+      ],
+      "shared_hit_blocks": 143,
+      "shared_read_blocks": 0
+    },
+    {
+      "execution_ms_runs": [
+        7.136,
+        7.225,
+        7.298
+      ],
+      "median_execution_ms": 7.225,
+      "median_planning_ms": 0.094,
+      "parameters": "{\"end_date\": \"2026-09-30\", \"limit\": 10, \"min_deliveries\": 5, \"start_date\": \"2026-09-24\", \"tz\": \"Asia/Kolkata\"}",
+      "query": "avg_delivery_time_by_city",
+      "scans": [
+        "Index Scan orders_delivered_ts_idx"
+      ],
+      "shared_hit_blocks": 7052,
+      "shared_read_blocks": 0
+    },
+    {
+      "execution_ms_runs": [
+        9.074,
+        9.38,
+        9.091
+      ],
+      "median_execution_ms": 9.091,
+      "median_planning_ms": 0.107,
+      "parameters": "{\"end_date\": \"2026-09-30\", \"limit\": 10, \"min_deliveries\": 5, \"start_date\": \"2026-09-24\", \"tz\": \"Asia/Kolkata\"}",
+      "query": "top_bottom_drivers",
+      "scans": [
+        "Index Scan orders_delivered_ts_idx",
+        "Subquery Scan"
+      ],
+      "shared_hit_blocks": 7052,
+      "shared_read_blocks": 0
+    },
+    {
+      "execution_ms_runs": [
+        1.983,
+        1.995,
+        2.028
+      ],
+      "median_execution_ms": 1.995,
+      "median_planning_ms": 0.05,
+      "parameters": "{\"end_date\": \"2026-09-30\", \"limit\": 10, \"min_deliveries\": 5, \"start_date\": \"2026-09-24\", \"tz\": \"Asia/Kolkata\"}",
+      "query": "driver_utilisation",
+      "scans": [
+        "Index Scan driver_performance_date_idx"
+      ],
+      "shared_hit_blocks": 45,
+      "shared_read_blocks": 0
+    },
+    {
+      "execution_ms_runs": [
+        25.323,
+        45.787,
+        21.178
+      ],
+      "median_execution_ms": 25.323,
+      "median_planning_ms": 0.456,
+      "parameters": "{\"day\": \"2026-09-30\", \"limit\": 10, \"min_deliveries\": 5, \"tz\": \"Asia/Kolkata\"}",
+      "query": "order_event_summary",
+      "scans": [
+        "CTE Scan",
+        "Index Scan delivery_events_order_id_idx",
+        "Index Scan orders_delivered_ts_idx"
+      ],
+      "shared_hit_blocks": 10070,
+      "shared_read_blocks": 0
+    },
+    {
+      "execution_ms_runs": [
+        100.405,
+        99.947,
+        100.745
+      ],
+      "median_execution_ms": 100.405,
+      "median_planning_ms": 0.938,
+      "parameters": "{\"dates\": [\"2026-09-30\"], \"max_session\": 86400, \"tz\": \"Asia/Kolkata\"}",
+      "query": "refresh_driver_performance",
+      "scans": [
+        "CTE Scan",
+        "Function Scan",
+        "Index Scan driver_shift_events_ts_idx",
+        "Index Scan orders_delivered_ts_idx",
+        "Subquery Scan"
+      ],
+      "shared_hit_blocks": 2155,
+      "shared_read_blocks": 0
+    }
+  ],
+  "warm_up_runs_per_query": 1
+}

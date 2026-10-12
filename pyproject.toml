@@ -1,0 +1,62 @@
+[project]
+name = "deliverypulse"
+version = "0.1.0"
+description = "Last-mile logistics data platform: idempotent ETL, data quality and SQL analytics on synthetic delivery data."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+# Runtime dependencies only; development tools are in the dev group below.
+dependencies = [
+    "numpy>=2.1",
+    "psycopg[binary]>=3.2",
+    "pyarrow>=17.0",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+# Not an installable package: code is run from the project root via `uv run`.
+package = false
+# Only use uv-managed Pythons; never Homebrew, python.org, pyenv or Apple Pythons.
+python-preference = "only-managed"
+
+# ---------------------------------------------------------------- ruff ---
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "N", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest relies on plain `assert` statements.
+"tests/**/*.py" = ["S101"]
+
+# ---------------------------------------------------------------- mypy ---
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+
+# pyarrow ships without type information; its objects are treated as Any.
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
+# -------------------------------------------------------------- pytest ---
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "unit: fast tests with no external services (no database, no Docker)",
+    "integration: tests that need running services such as PostgreSQL",
+]

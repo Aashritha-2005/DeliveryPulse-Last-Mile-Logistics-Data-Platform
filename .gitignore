@@ -1,0 +1,37 @@
+# --- Secrets and credentials (never commit) ---
+.env
+.env.local
+*.pem
+*.key
+kubeconfig
+*.kubeconfig
+
+# --- Generated data: ignore contents, keep the folder skeleton ---
+# `data/*` alone would not work: git cannot re-include files inside an
+# ignored directory, so directories are re-included first, then .gitkeep.
+data/**
+!data/**/
+!data/**/.gitkeep
+*.parquet
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# --- Terraform state ---
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/

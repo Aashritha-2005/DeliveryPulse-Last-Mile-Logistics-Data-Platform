@@ -1,0 +1,16 @@
+# Minimal Task 1 hooks: ruff only. NOT installed or activated yet.
+# Local hooks reuse the ruff version locked in uv.lock (no second ruff copy).
+# Secret-scanning and security hooks are added in Task 9.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run ruff format --check
+        language: system
+        types: [python]

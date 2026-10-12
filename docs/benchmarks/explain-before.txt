@@ -1,0 +1,319 @@
+{
+  "data_period": [
+    "2026-09-10",
+    "2026-09-30"
+  ],
+  "dataset": "seed-42_orders-50000_cfg-449e309b",
+  "label": "before",
+  "measured_runs_per_query": 3,
+  "postgresql_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+  "warm_up_runs_per_query": 1
+}
+
+===== peak_hours  params={"end_date": "2026-09-30", "limit": 10, "min_deliveries": 5, "start_date": "2026-09-10", "tz": "Asia/Kolkata"}
+Sort  (cost=12390.35..12509.71 rows=47746 width=52) (actual time=27.357..27.358 rows=16.00 loops=1)
+  Sort Key: hourly.hour_of_day
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=864
+  ->  WindowAgg  (cost=8202.26..8679.75 rows=47746 width=52) (actual time=27.339..27.344 rows=16.00 loops=1)
+        Window: w2 AS ()
+        Storage: Memory  Maximum Storage: 17kB
+        Buffers: shared hit=864
+        ->  WindowAgg  (cost=6769.92..7605.46 rows=47746 width=20) (actual time=27.321..27.328 rows=16.00 loops=1)
+              Window: w1 AS (ORDER BY hourly.orders ROWS UNBOUNDED PRECEDING)
+              Storage: Memory  Maximum Storage: 17kB
+              Buffers: shared hit=864
+              ->  Sort  (cost=6769.91..6889.27 rows=47746 width=12) (actual time=27.317..27.318 rows=16.00 loops=1)
+                    Sort Key: hourly.orders DESC
+                    Sort Method: quicksort  Memory: 25kB
+                    Buffers: shared hit=864
+                    ->  Subquery Scan on hourly  (cost=2223.75..3059.30 rows=47746 width=12) (actual time=27.100..27.312 rows=16.00 loops=1)
+                          Buffers: shared hit=864
+                          ->  HashAggregate  (cost=2223.75..3059.30 rows=47746 width=12) (actual time=27.099..27.309 rows=16.00 loops=1)
+                                Group Key: (EXTRACT(hour FROM (o.order_created_ts AT TIME ZONE 'Asia/Kolkata'::text)))::integer
+                                Batches: 1  Memory Usage: 1057kB
+                                Buffers: shared hit=864
+                                ->  Seq Scan on orders o  (cost=0.00..1976.55 rows=49440 width=4) (actual time=0.007..21.117 rows=49450.00 loops=1)
+                                      Filter: ((order_created_ts >= '2026-09-09 18:30:00+00'::timestamp with time zone) AND (order_created_ts < '2026-09-30 18:30:00+00'::timestamp with time zone))
+                                      Buffers: shared hit=864
+Planning Time: 0.088 ms
+Execution Time: 27.403 ms
+
+===== avg_delivery_time_by_city  params={"end_date": "2026-09-30", "limit": 10, "min_deliveries": 5, "start_date": "2026-09-24", "tz": "Asia/Kolkata"}
+Sort  (cost=1910.90..1910.91 rows=5 width=48) (actual time=8.104..8.104 rows=5.00 loops=1)
+  Sort Key: (round((avg(EXTRACT(epoch FROM (delivery_ts - pickup_ts))) / '60'::numeric), 2)), city
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=864
+  ->  HashAggregate  (cost=1910.75..1910.84 rows=5 width=48) (actual time=8.099..8.101 rows=5.00 loops=1)
+        Group Key: city
+        Batches: 1  Memory Usage: 32kB
+        Buffers: shared hit=864
+        ->  Seq Scan on orders o  (cost=0.00..1729.38 rows=14510 width=24) (actual time=2.015..4.133 rows=15487.00 loops=1)
+              Filter: ((delivery_ts >= '2026-09-23 18:30:00+00'::timestamp with time zone) AND (delivery_ts < '2026-09-30 18:30:00+00'::timestamp with time zone) AND (status = 'delivered'::text))
+              Rows Removed by Filter: 33963
+              Buffers: shared hit=864
+Planning Time: 0.038 ms
+Execution Time: 8.121 ms
+
+===== top_bottom_drivers  params={"end_date": "2026-09-30", "limit": 10, "min_deliveries": 5, "start_date": "2026-09-24", "tz": "Asia/Kolkata"}
+Sort  (cost=1966.66..1967.05 rows=153 width=98) (actual time=9.997..9.999 rows=21.00 loops=1)
+  Sort Key: ranked.fastest_rank, ranked.driver_id
+  Sort Method: quicksort  Memory: 26kB
+  Buffers: shared hit=864
+  ->  Subquery Scan on ranked  (cost=1951.78..1961.11 rows=153 width=98) (actual time=9.635..9.989 rows=21.00 loops=1)
+        Filter: ((ranked.fastest_rank <= '10'::smallint) OR (ranked.slowest_rank <= '10'::smallint))
+        Rows Removed by Filter: 804
+        Buffers: shared hit=864
+        ->  WindowAgg  (cost=1951.78..1956.59 rows=276 width=66) (actual time=9.634..9.940 rows=825.00 loops=1)
+              Window: w2 AS (ORDER BY per_driver.avg_minutes ROWS UNBOUNDED PRECEDING)
+              Storage: Memory  Maximum Storage: 17kB
+              Buffers: shared hit=864
+              ->  Sort  (cost=1951.76..1952.45 rows=276 width=58) (actual time=9.633..9.669 rows=825.00 loops=1)
+                    Sort Key: per_driver.avg_minutes
+                    Sort Method: quicksort  Memory: 70kB
+                    Buffers: shared hit=864
+                    ->  WindowAgg  (cost=1935.76..1940.57 rows=276 width=58) (actual time=9.184..9.466 rows=825.00 loops=1)
+                          Window: w1 AS (ORDER BY per_driver.avg_minutes ROWS UNBOUNDED PRECEDING)
+                          Storage: Memory  Maximum Storage: 17kB
+                          Buffers: shared hit=864
+                          ->  Sort  (cost=1935.74..1936.43 rows=276 width=50) (actual time=9.178..9.212 rows=825.00 loops=1)
+                                Sort Key: per_driver.avg_minutes DESC
+                                Sort Method: quicksort  Memory: 63kB
+                                Buffers: shared hit=864
+                                ->  Subquery Scan on per_driver  (cost=1910.75..1924.55 rows=276 width=50) (actual time=8.617..9.001 rows=825.00 loops=1)
+                                      Buffers: shared hit=864
+                                      ->  HashAggregate  (cost=1910.75..1924.55 rows=276 width=50) (actual time=8.617..8.928 rows=825.00 loops=1)
+                                            Group Key: o.driver_id
+                                            Filter: (count(*) >= '5'::smallint)
+                                            Batches: 1  Memory Usage: 353kB
+                                            Rows Removed by Filter: 2
+                                            Buffers: shared hit=864
+                                            ->  Seq Scan on orders o  (cost=0.00..1729.38 rows=14510 width=26) (actual time=1.954..4.094 rows=15487.00 loops=1)
+                                                  Filter: ((delivery_ts >= '2026-09-23 18:30:00+00'::timestamp with time zone) AND (delivery_ts < '2026-09-30 18:30:00+00'::timestamp with time zone) AND (status = 'delivered'::text))
+                                                  Rows Removed by Filter: 33963
+                                                  Buffers: shared hit=864
+Planning Time: 0.112 ms
+Execution Time: 10.028 ms
+
+===== driver_utilisation  params={"end_date": "2026-09-30", "limit": 10, "min_deliveries": 5, "start_date": "2026-09-24", "tz": "Asia/Kolkata"}
+Limit  (cost=576.25..576.28 rows=10 width=114) (actual time=2.399..2.400 rows=10.00 loops=1)
+  Buffers: shared hit=312
+  ->  Sort  (cost=576.25..578.32 rows=826 width=114) (actual time=2.399..2.399 rows=10.00 loops=1)
+        Sort Key: (round(((sum(busy_minutes) * '100'::numeric) / NULLIF(sum(online_minutes), '0'::numeric)), 2)) DESC NULLS LAST, driver_id
+        Sort Method: top-N heapsort  Memory: 26kB
+        Buffers: shared hit=312
+        ->  HashAggregate  (cost=537.75..558.40 rows=826 width=114) (actual time=1.886..2.236 rows=827.00 loops=1)
+              Group Key: driver_id
+              Batches: 1  Memory Usage: 673kB
+              Buffers: shared hit=312
+              ->  Seq Scan on driver_performance p  (cost=0.00..497.17 rows=4058 width=25) (actual time=0.474..0.963 rows=3934.00 loops=1)
+                    Filter: ((online_minutes IS NOT NULL) AND (metric_date >= '2026-09-24'::date) AND (metric_date <= '2026-09-30'::date))
+                    Rows Removed by Filter: 8411
+                    Buffers: shared hit=312
+Planning Time: 0.033 ms
+Execution Time: 2.411 ms
+
+===== order_event_summary  params={"day": "2026-09-30", "limit": 10, "min_deliveries": 5, "tz": "Asia/Kolkata"}
+GroupAggregate  (cost=14372.93..14399.07 rows=5 width=104) (actual time=72.792..73.025 rows=5.00 loops=1)
+  Group Key: d.city
+  Buffers: shared hit=1496 read=4798
+  CTE day_orders
+    ->  Seq Scan on orders o  (cost=0.00..1729.38 rows=2084 width=20) (actual time=3.133..3.524 rows=2195.00 loops=1)
+          Filter: ((delivery_ts >= '2026-09-29 18:30:00+00'::timestamp with time zone) AND (delivery_ts < '2026-09-30 18:30:00+00'::timestamp with time zone) AND (status = 'delivered'::text))
+          Rows Removed by Filter: 47255
+          Buffers: shared hit=864
+  ->  Sort  (cost=12643.55..12648.76 rows=2084 width=48) (actual time=72.711..72.804 rows=2195.00 loops=1)
+        Sort Key: d.city
+        Sort Method: quicksort  Memory: 189kB
+        Buffers: shared hit=1496 read=4798
+        ->  Hash Right Join  (cost=12022.07..12528.67 rows=2084 width=48) (actual time=71.617..72.370 rows=2195.00 loops=1)
+              Hash Cond: (e.order_id = d.order_id)
+              Buffers: shared hit=1496 read=4798
+              ->  HashAggregate  (cost=11954.34..12158.87 rows=20453 width=28) (actual time=67.407..67.746 rows=2195.00 loops=1)
+                    Group Key: e.order_id
+                    Batches: 1  Memory Usage: 793kB
+                    Buffers: shared hit=632 read=4798
+                    ->  Hash Join  (cost=67.73..11749.81 rows=20453 width=21) (actual time=59.075..64.299 rows=21399.00 loops=1)
+                          Hash Cond: (e.order_id = d_1.order_id)
+                          Buffers: shared hit=632 read=4798
+                          ->  Seq Scan on delivery_events e  (cost=0.00..9828.22 rows=439822 width=21) (actual time=0.110..26.057 rows=439822.00 loops=1)
+                                Buffers: shared hit=632 read=4798
+                          ->  Hash  (cost=41.68..41.68 rows=2084 width=32) (actual time=0.373..0.374 rows=2195.00 loops=1)
+                                Buckets: 4096  Batches: 1  Memory Usage: 127kB
+                                ->  CTE Scan on day_orders d_1  (cost=0.00..41.68 rows=2084 width=32) (actual time=0.001..0.153 rows=2195.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 135kB
+              ->  Hash  (cost=41.68..41.68 rows=2084 width=64) (actual time=4.208..4.208 rows=2195.00 loops=1)
+                    Buckets: 4096  Batches: 1  Memory Usage: 144kB
+                    Buffers: shared hit=864
+                    ->  CTE Scan on day_orders d  (cost=0.00..41.68 rows=2084 width=64) (actual time=3.135..3.977 rows=2195.00 loops=1)
+                          Storage: Memory  Maximum Storage: 135kB
+                          Buffers: shared hit=864
+Planning Time: 0.180 ms
+Execution Time: 73.071 ms
+
+===== refresh_driver_performance  params={"dates": ["2026-09-30"], "max_session": 86400, "tz": "Asia/Kolkata"}
+Hash Left Join  (cost=7740.60..7875.02 rows=1029 width=168) (actual time=118.326..119.159 rows=585.00 loops=1)
+  Hash Cond: ((k.metric_date = bd.metric_date) AND (k.driver_id = bd.driver_id))
+  Buffers: shared hit=2149
+  CTE days
+    ->  Function Scan on unnest u  (cost=0.00..0.03 rows=1 width=20) (actual time=0.010..0.011 rows=1.00 loops=1)
+  CTE deliveries
+    ->  HashAggregate  (cost=2248.54..2258.89 rows=828 width=54) (actual time=9.642..9.748 rows=584.00 loops=1)
+          Group Key: days_1.metric_date, o.driver_id
+          Batches: 1  Memory Usage: 353kB
+          Buffers: shared hit=864
+          ->  Nested Loop  (cost=0.00..2171.90 rows=5109 width=30) (actual time=8.409..8.965 rows=2195.00 loops=1)
+                Join Filter: ((o.delivery_ts >= days_1.day_start) AND (o.delivery_ts < days_1.day_end))
+                Rows Removed by Join Filter: 43786
+                Buffers: shared hit=864
+                ->  CTE Scan on days days_1  (cost=0.00..0.02 rows=1 width=20) (actual time=0.011..0.012 rows=1.00 loops=1)
+                      Storage: Memory  Maximum Storage: 17kB
+                ->  Seq Scan on orders o  (cost=0.00..1482.12 rows=45984 width=26) (actual time=0.012..5.673 rows=45981.00 loops=1)
+                      Filter: (status = 'delivered'::text)
+                      Rows Removed by Filter: 3469
+                      Buffers: shared hit=864
+  CTE busy
+    ->  HashAggregate  (cost=2960.54..2963.04 rows=200 width=46) (actual time=13.678..13.770 rows=584.00 loops=1)
+          Group Key: days_2.metric_date, o_1.driver_id
+          Batches: 1  Memory Usage: 345kB
+          Buffers: shared hit=864
+          ->  HashAggregate  (cost=2933.63..2941.91 rows=828 width=38) (actual time=12.708..12.979 rows=2195.00 loops=1)
+                Group Key: days_2.metric_date, o_1.driver_id, sum((CASE WHEN ((GREATEST(o_1.pickup_ts, days_2.day_start)) <= max((LEAST(o_1.delivery_ts, days_2.day_end))) OVER w1) THEN 0 ELSE 1 END)) OVER w1
+                Batches: 1  Memory Usage: 345kB
+                Buffers: shared hit=864
+                ->  WindowAgg  (cost=2512.22..2818.67 rows=5109 width=38) (actual time=10.538..12.149 rows=2195.00 loops=1)
+                      Window: w1 AS (PARTITION BY days_2.metric_date, o_1.driver_id ORDER BY (GREATEST(o_1.pickup_ts, days_2.day_start)), (LEAST(o_1.delivery_ts, days_2.day_end)) ROWS UNBOUNDED PRECEDING)
+                      Storage: Memory  Maximum Storage: 17kB
+                      Buffers: shared hit=864
+                      ->  WindowAgg  (cost=2512.16..2703.72 rows=5109 width=34) (actual time=10.533..11.344 rows=2195.00 loops=1)
+                            Window: w1 AS (PARTITION BY days_2.metric_date, o_1.driver_id ORDER BY (GREATEST(o_1.pickup_ts, days_2.day_start)), (LEAST(o_1.delivery_ts, days_2.day_end)) ROWS BETWEEN UNBOUNDED PRECEDING AND '1'::bigint PRECEDING)
+                            Storage: Memory  Maximum Storage: 17kB
+                            Buffers: shared hit=864
+                            ->  Sort  (cost=2512.13..2524.91 rows=5109 width=62) (actual time=10.527..10.650 rows=2195.00 loops=1)
+                                  Sort Key: days_2.metric_date, o_1.driver_id, (GREATEST(o_1.pickup_ts, days_2.day_start)), (LEAST(o_1.delivery_ts, days_2.day_end))
+                                  Sort Method: quicksort  Memory: 268kB
+                                  Buffers: shared hit=864
+                                  ->  Nested Loop  (cost=0.00..2197.45 rows=5109 width=62) (actual time=7.111..7.648 rows=2195.00 loops=1)
+                                        Join Filter: ((o_1.pickup_ts < days_2.day_end) AND (o_1.delivery_ts > days_2.day_start))
+                                        Rows Removed by Join Filter: 43786
+                                        Buffers: shared hit=864
+                                        ->  CTE Scan on days days_2  (cost=0.00..0.02 rows=1 width=20) (actual time=0.000..0.001 rows=1.00 loops=1)
+                                              Storage: Memory  Maximum Storage: 17kB
+                                        ->  Seq Scan on orders o_1  (cost=0.00..1482.12 rows=45984 width=26) (actual time=0.004..4.976 rows=45981.00 loops=1)
+                                              Filter: (status = 'delivered'::text)
+                                              Rows Removed by Filter: 3469
+                                              Buffers: shared hit=864
+  CTE shift_window
+    ->  Nested Loop  (cost=0.03..1644.72 rows=5439 width=39) (actual time=5.814..6.630 rows=4642.00 loops=1)
+          Join Filter: ((se.event_ts >= ((min(days_3.day_start) - '1 day'::interval))) AND (se.event_ts < ((max(days_3.day_end) + '1 day'::interval))))
+          Rows Removed by Join Filter: 44305
+          Buffers: shared hit=421
+          ->  Aggregate  (cost=0.03..0.04 rows=1 width=16) (actual time=0.007..0.008 rows=1.00 loops=1)
+                ->  CTE Scan on days days_3  (cost=0.00..0.02 rows=1 width=16) (actual time=0.000..0.000 rows=1.00 loops=1)
+                      Storage: Memory  Maximum Storage: 17kB
+          ->  Seq Scan on driver_shift_events se  (cost=0.00..910.47 rows=48947 width=39) (actual time=0.012..2.519 rows=48947.00 loops=1)
+                Buffers: shared hit=421
+  CTE sessions
+    ->  Subquery Scan on onoff  (cost=276.61..398.31 rows=1 width=48) (actual time=11.143..12.403 rows=971.00 loops=1)
+          Filter: ((onoff.event_type = 'online'::text) AND (onoff.next_type = 'offline'::text) AND ((onoff.next_ts - onoff.event_ts) <= '24:00:00'::interval))
+          Rows Removed by Filter: 1343
+          Buffers: shared hit=421
+          ->  WindowAgg  (cost=276.61..344.21 rows=2705 width=144) (actual time=11.141..12.154 rows=2314.00 loops=1)
+                Window: w AS (PARTITION BY shift_window_1.driver_id ORDER BY shift_window_1.event_ts, ((shift_window_1.event_id)::text))
+                Storage: Memory  Maximum Storage: 17kB
+                Buffers: shared hit=421
+                ->  Sort  (cost=276.58..283.34 rows=2705 width=104) (actual time=11.136..11.237 rows=2314.00 loops=1)
+                      Sort Key: shift_window_1.driver_id, shift_window_1.event_ts, ((shift_window_1.event_id)::text) COLLATE "C"
+                      Sort Method: quicksort  Memory: 241kB
+                      Buffers: shared hit=421
+                      ->  CTE Scan on shift_window shift_window_1  (cost=0.00..122.38 rows=2705 width=104) (actual time=5.817..7.745 rows=2314.00 loops=1)
+                            Filter: (event_type = ANY ('{online,offline}'::text[]))
+                            Rows Removed by Filter: 2328
+                            Storage: Memory  Maximum Storage: 391kB
+                            Buffers: shared hit=421
+  CTE session_day
+    ->  HashAggregate  (cost=0.07..0.09 rows=1 width=68) (actual time=12.901..12.982 rows=399.00 loops=1)
+          Group Key: days_4.metric_date, ses_1.driver_id
+          Batches: 1  Memory Usage: 200kB
+          Buffers: shared hit=421
+          ->  Nested Loop  (cost=0.00..0.06 rows=1 width=68) (actual time=11.148..12.716 rows=400.00 loops=1)
+                Join Filter: ((ses_1.s < days_4.day_end) AND (ses_1.e > days_4.day_start))
+                Rows Removed by Join Filter: 571
+                Buffers: shared hit=421
+                ->  CTE Scan on days days_4  (cost=0.00..0.02 rows=1 width=20) (actual time=0.000..0.001 rows=1.00 loops=1)
+                      Storage: Memory  Maximum Storage: 17kB
+                ->  CTE Scan on sessions ses_1  (cost=0.00..0.02 rows=1 width=48) (actual time=11.144..12.611 rows=971.00 loops=1)
+                      Storage: Memory  Maximum Storage: 70kB
+                      Buffers: shared hit=421
+  ->  Hash Left Join  (cost=73.92..159.20 rows=1029 width=140) (actual time=37.575..37.955 rows=585.00 loops=1)
+        Hash Cond: ((k.metric_date = sd.metric_date) AND (k.driver_id = sd.driver_id))
+        Buffers: shared hit=2149
+        ->  Hash Left Join  (cost=73.88..151.44 rows=1029 width=108) (actual time=37.493..37.770 rows=585.00 loops=1)
+              Hash Cond: ((k.metric_date = b.metric_date) AND (k.driver_id = b.driver_id))
+              Buffers: shared hit=2149
+              ->  Hash Right Join  (cost=66.88..87.79 rows=1029 width=76) (actual time=37.378..37.543 rows=585.00 loops=1)
+                    Hash Cond: ((dl.metric_date = k.metric_date) AND (dl.driver_id = k.driver_id))
+                    Buffers: shared hit=2149
+                    ->  CTE Scan on deliveries dl  (cost=0.00..16.56 rows=828 width=76) (actual time=0.001..0.036 rows=584.00 loops=1)
+                          Storage: Memory  Maximum Storage: 48kB
+                    ->  Hash  (cost=51.45..51.45 rows=1029 width=36) (actual time=37.374..37.376 rows=585.00 loops=1)
+                          Buckets: 2048  Batches: 1  Memory Usage: 44kB
+                          Buffers: shared hit=2149
+                          ->  Subquery Scan on k  (cost=30.87..51.45 rows=1029 width=36) (actual time=37.187..37.305 rows=585.00 loops=1)
+                                Buffers: shared hit=2149
+                                ->  HashAggregate  (cost=30.87..41.16 rows=1029 width=36) (actual time=37.186..37.255 rows=585.00 loops=1)
+                                      Group Key: deliveries.metric_date, deliveries.driver_id
+                                      Batches: 1  Memory Usage: 89kB
+                                      Buffers: shared hit=2149
+                                      ->  Append  (cost=0.00..25.72 rows=1029 width=36) (actual time=9.644..36.954 rows=1567.00 loops=1)
+                                            Buffers: shared hit=2149
+                                            ->  CTE Scan on deliveries  (cost=0.00..16.56 rows=828 width=36) (actual time=9.643..9.875 rows=584.00 loops=1)
+                                                  Storage: Memory  Maximum Storage: 48kB
+                                                  Buffers: shared hit=864
+                                            ->  CTE Scan on busy  (cost=0.00..4.00 rows=200 width=36) (actual time=13.679..13.898 rows=584.00 loops=1)
+                                                  Storage: Memory  Maximum Storage: 44kB
+                                                  Buffers: shared hit=864
+                                            ->  CTE Scan on session_day  (cost=0.00..0.02 rows=1 width=36) (actual time=12.903..13.069 rows=399.00 loops=1)
+                                                  Storage: Memory  Maximum Storage: 35kB
+                                                  Buffers: shared hit=421
+              ->  Hash  (cost=4.00..4.00 rows=200 width=68) (actual time=0.112..0.112 rows=584.00 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 39kB
+                    ->  CTE Scan on busy b  (cost=0.00..4.00 rows=200 width=68) (actual time=0.001..0.045 rows=584.00 loops=1)
+                          Storage: Memory  Maximum Storage: 44kB
+        ->  Hash  (cost=0.02..0.02 rows=1 width=68) (actual time=0.079..0.080 rows=399.00 loops=1)
+              Buckets: 1024  Batches: 1  Memory Usage: 30kB
+              ->  CTE Scan on session_day sd  (cost=0.00..0.02 rows=1 width=68) (actual time=0.000..0.031 rows=399.00 loops=1)
+                    Storage: Memory  Maximum Storage: 35kB
+  ->  Hash  (cost=401.61..401.61 rows=1 width=68) (actual time=80.739..80.742 rows=389.00 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 29kB
+        ->  Subquery Scan on bd  (cost=401.57..401.61 rows=1 width=68) (actual time=80.412..80.682 rows=389.00 loops=1)
+              ->  GroupAggregate  (cost=401.57..401.60 rows=1 width=68) (actual time=80.412..80.646 rows=389.00 loops=1)
+                    Group Key: days.metric_date, break_events.driver_id
+                    ->  Sort  (cost=401.57..401.57 rows=1 width=84) (actual time=80.402..80.422 rows=389.00 loops=1)
+                          Sort Key: days.metric_date, break_events.driver_id
+                          Sort Method: quicksort  Memory: 55kB
+                          ->  Nested Loop  (cost=278.47..401.56 rows=1 width=84) (actual time=3.594..79.806 rows=389.00 loops=1)
+                                Join Filter: ((ses.s < break_events.next_ts) AND (ses.e > break_events.event_ts) AND (break_events.driver_id = ses.driver_id) AND (LEAST(break_events.next_ts, ses.e, days.day_end) > GREATEST(break_events.event_ts, ses.s, days.day_start)))
+                                Rows Removed by Join Filter: 564733
+                                ->  Nested Loop  (cost=278.47..401.51 rows=1 width=68) (actual time=3.592..5.550 rows=582.00 loops=1)
+                                      Join Filter: ((break_events.event_ts < days.day_end) AND (break_events.next_ts > days.day_start))
+                                      Rows Removed by Join Filter: 582
+                                      ->  Subquery Scan on break_events  (cost=278.47..401.48 rows=1 width=48) (actual time=3.589..5.058 rows=1164.00 loops=1)
+                                            Filter: ((break_events.event_type = 'break_start'::text) AND (break_events.next_type = 'break_end'::text) AND ((break_events.next_ts - break_events.event_ts) <= '24:00:00'::interval))
+                                            Rows Removed by Filter: 1164
+                                            ->  WindowAgg  (cost=278.47..346.80 rows=2734 width=144) (actual time=3.588..4.793 rows=2328.00 loops=1)
+                                                  Window: w AS (PARTITION BY shift_window.driver_id ORDER BY shift_window.event_ts, ((shift_window.event_id)::text))
+                                                  Storage: Memory  Maximum Storage: 17kB
+                                                  ->  Sort  (cost=278.45..285.28 rows=2734 width=104) (actual time=3.584..3.713 rows=2328.00 loops=1)
+                                                        Sort Key: shift_window.driver_id, shift_window.event_ts, ((shift_window.event_id)::text) COLLATE "C"
+                                                        Sort Method: quicksort  Memory: 242kB
+                                                        ->  CTE Scan on shift_window  (cost=0.00..122.38 rows=2734 width=104) (actual time=0.029..0.501 rows=2328.00 loops=1)
+                                                              Filter: (event_type = ANY ('{break_start,break_end}'::text[]))
+                                                              Rows Removed by Filter: 2314
+                                                              Storage: Memory  Maximum Storage: 391kB
+                                      ->  CTE Scan on days  (cost=0.00..0.02 rows=1 width=20) (actual time=0.000..0.000 rows=1.00 loops=1164)
+                                            Storage: Memory  Maximum Storage: 17kB
+                                ->  CTE Scan on sessions ses  (cost=0.00..0.02 rows=1 width=48) (actual time=0.000..0.056 rows=971.00 loops=582)
+                                      Storage: Memory  Maximum Storage: 70kB
+Planning Time: 1.032 ms
+Execution Time: 119.355 ms
