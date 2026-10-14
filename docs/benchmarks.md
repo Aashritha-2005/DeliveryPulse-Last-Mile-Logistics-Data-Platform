@@ -392,3 +392,93 @@ capacity predictions. Actual image storage was not measured. No Spark or Airflow
 during the stream trials; lightweight editing/lint and resource probes occurred during the
 runs. CI configuration is prepared; its new Kafka job has not yet been run on GitHub.
 
+## 4. MongoDB raw event store (2026-10-15)
+
+One session on the same 16 GiB Apple Silicon machine: macOS 26.6.2 arm64, 10 logical CPUs.
+MongoDB Community 8.0.32, PyMongo 4.18.2 and dnspython 2.8.0; the image tag and confirmed
+multi-platform digest are in `docker-compose.mongo.yml`. Dataset:
+`seed-42_orders-50000_cfg-449e309b`, three batches, **441,222 raw delivery-event rows**.
+The roadmap's approximate 540,000 event-document estimate did not match the actual input.
+Full machine-readable results and plans: [mongo-2026-10-15.json](benchmarks/mongo-2026-10-15.json).
+
+Commands, in order, with the user-started server already healthy:
+
+```bash
+make test-mongo
+make mongo-stats
+make mongo-load
+make mongo-load
+make mongo-stats
+make mongo-query
+```
+
+An additional `mongo-stats` sample was taken during the initial load. Initial live tests and
+the baseline probe overlapped; only the separate MongoDB test collection received fixture rows.
+
+| Load | Input rows | Inserted | Duplicate | Modified | Elapsed seconds | Host process peak RSS (MiB) |
+|---|---:|---:|---:|---:|---:|---:|
+| Initial | 441,222 | 441,222 | 0 | 0 | 16.618 | 98.063 |
+| Replay | 441,222 | 0 | 441,222 | 0 | 12.296 | 89.891 |
+
+Elapsed load time includes source-manifest verification, parsing, chunk reads/writes and
+post-load source checks; it excludes process startup and client construction. Peak RSS is
+the operating system's high-water measurement for the host loader process, including imports.
+Replay overlapped PostgreSQL integration checks and unit verification. These are one-session
+measurements, not isolated repeated throughput benchmarks. Replay never updates ingestion times.
+
+### Query comparison
+
+Question: all raw events for `ORD-0000001`, retaining duplicates, ordered by text timestamp,
+batch ID, source filename and source row. Both return **8 equal rows**, with the same projection,
+including provenance and extra columns. PostgreSQL uses its ETL role in a read-only transaction.
+The read-only dashboard role's grants were not widened. No PostgreSQL index or schema changed.
+
+One warm-up then five measured client queries per store, alternating execution order. Timings
+include fetching/materializing results. Equality checks and the separately collected execution
+plans are outside the timed sections. These queries ran after the other verification commands
+completed and before coverage started.
+
+| Store | Median client query time | Observed plan |
+|---|---:|---|
+| MongoDB | 1.678 ms | `order_timeline` IXSCAN, FETCH and projection; 8 keys and 8 documents examined |
+| PostgreSQL | 26.325 ms | Parallel sequential scan, gather and sort; separate EXPLAIN execution time 24.506 ms |
+
+**Conclusion:** MongoDB's indexed lookup was faster for this query against PostgreSQL's
+unchanged raw table, which has no equivalent order lookup index. This compares the implemented
+access paths, not the inherent speed of the engines. One order, one session and warm reads do
+not establish general performance. A PostgreSQL index comparison would require separate scope.
+Mongo's driver and batch indexes were verified to exist but their performance was not benchmarked.
+Captured explain JSON canonicalizes object-key order; the artifact separately records the
+actual ordered sort keys.
+
+### Memory and disk
+
+| Measurement | Observed value |
+|---|---:|
+| MongoDB baseline memory sample | 121.3 MiB |
+| Memory sample during load | 433.8 MiB |
+| Memory sample after replay | 487 MiB |
+| Server memory limit / WiredTiger cache | 768 MiB / 0.25 GiB (configured limits) |
+| Final collection count | 441,222 |
+| Logical BSON size | 271,528,534 bytes |
+| Allocated collection storage | 72,101,888 bytes |
+| Total allocated index storage | 151,064,576 bytes |
+| Data directory, baseline / final | 206,576 / 424,604 KiB |
+| Config directory | 4 KiB |
+
+Final index sizes: `_id_` 37,937,152 bytes; `batch_lookup` 2,088,960 bytes;
+`driver_timeline` 56,692,736 bytes; `order_timeline` 54,345,728 bytes. The data directory also
+includes journal, metadata and small test fixtures, so it is larger than collection plus index
+storage. Post-replay container-filesystem free space was 977,297,900 KiB; that virtual filesystem
+figure is distinct from physical host free space. The loader separately enforces a 10 GiB host
+free-space floor. Image storage and bootstrap memory peak were not measured. Memory samples
+are not a continuous peak.
+
+**Limitations and estimates:** standalone local server, no replication, sharding, transactions
+across chunks or production durability claim. One loader at a time; concurrent insert races
+fail and require an identical replay. No analytics changes, Kafka consumption or lake writes.
+Raw storage is duplicated across stores. For future planning, reserve **1–2 GiB additional
+disk [estimate, excluding image storage]**; the server's **768 MiB** limit is configuration,
+not a promise of workload capacity. Keep heavy profiles separate. CI configuration is locally
+validated; the new MongoDB job still requires a real GitHub run.
+

@@ -1,0 +1,449 @@
+{
+  "date": "2026-10-15",
+  "hardware": {
+    "os": "macOS 26.6.2",
+    "architecture": "arm64",
+    "logical_cpus": 10,
+    "ram_gib": 16
+  },
+  "dataset": "seed-42_orders-50000_cfg-449e309b",
+  "commands": [
+    "make mongo-load",
+    "make mongo-load",
+    "make mongo-query",
+    "make mongo-stats"
+  ],
+  "initial_load": {
+    "rows": 441222,
+    "inserted": 441222,
+    "duplicate": 0,
+    "modified": 0,
+    "seconds": 16.61758929095231,
+    "host_peak_rss_mib": 98.0625
+  },
+  "replay": {
+    "rows": 441222,
+    "inserted": 0,
+    "duplicate": 441222,
+    "modified": 0,
+    "seconds": 12.295961167197675,
+    "host_peak_rss_mib": 89.890625
+  },
+  "resources": {
+    "baseline_memory_mib": 121.3,
+    "load_sample_memory_mib": 433.8,
+    "post_replay_memory_mib": 487,
+    "limit_mib": 768,
+    "baseline_data_directory_kib": 206576,
+    "post_replay_data_directory_kib": 424604,
+    "config_directory_kib": 4,
+    "post_replay": {
+      "count": 441222,
+      "size": 271528534,
+      "storageSize": 72101888,
+      "totalIndexSize": 151064576,
+      "indexSizes": {
+        "_id_": 37937152,
+        "batch_lookup": 2088960,
+        "driver_timeline": 56692736,
+        "order_timeline": 54345728
+      }
+    },
+    "container_filesystem_available_kib": 977297900
+  },
+  "comparison": {
+    "equal": true,
+    "mongo_median_seconds": 0.0016779170837253332,
+    "mongo_plan": {
+      "command": {
+        "$db": "deliverypulse",
+        "filter": {
+          "order_id": "ORD-0000001"
+        },
+        "find": "raw_events",
+        "projection": {
+          "_id": 0,
+          "batch_id": 1,
+          "driver_id": 1,
+          "event_id": 1,
+          "event_ts": 1,
+          "event_type": 1,
+          "extra_columns": 1,
+          "lat": 1,
+          "lon": 1,
+          "order_id": 1,
+          "source_file": 1,
+          "source_row_number": 1
+        },
+        "sort": {
+          "batch_id": 1,
+          "event_ts": 1,
+          "source_file": 1,
+          "source_row_number": 1
+        }
+      },
+      "executionStats": {
+        "executionStages": {
+          "advanced": 8,
+          "executionTimeMillisEstimate": 0,
+          "inputStage": {
+            "advanced": 8,
+            "alreadyHasObj": 0,
+            "docsExamined": 8,
+            "executionTimeMillisEstimate": 0,
+            "inputStage": {
+              "advanced": 8,
+              "direction": "forward",
+              "dupsDropped": 0,
+              "dupsTested": 0,
+              "executionTimeMillisEstimate": 0,
+              "indexBounds": {
+                "batch_id": [
+                  "[MinKey, MaxKey]"
+                ],
+                "event_ts": [
+                  "[MinKey, MaxKey]"
+                ],
+                "order_id": [
+                  "[\"ORD-0000001\", \"ORD-0000001\"]"
+                ],
+                "source_file": [
+                  "[MinKey, MaxKey]"
+                ],
+                "source_row_number": [
+                  "[MinKey, MaxKey]"
+                ]
+              },
+              "indexName": "order_timeline",
+              "indexVersion": 2,
+              "isEOF": 1,
+              "isMultiKey": false,
+              "isPartial": false,
+              "isSparse": false,
+              "isUnique": false,
+              "keyPattern": {
+                "batch_id": 1,
+                "event_ts": 1,
+                "order_id": 1,
+                "source_file": 1,
+                "source_row_number": 1
+              },
+              "keysExamined": 8,
+              "multiKeyPaths": {
+                "batch_id": [],
+                "event_ts": [],
+                "order_id": [],
+                "source_file": [],
+                "source_row_number": []
+              },
+              "nReturned": 8,
+              "needTime": 0,
+              "needYield": 0,
+              "restoreState": 0,
+              "saveState": 0,
+              "seeks": 1,
+              "stage": "IXSCAN",
+              "works": 9
+            },
+            "isEOF": 1,
+            "nReturned": 8,
+            "needTime": 0,
+            "needYield": 0,
+            "restoreState": 0,
+            "saveState": 0,
+            "stage": "FETCH",
+            "works": 9
+          },
+          "isCached": false,
+          "isEOF": 1,
+          "nReturned": 8,
+          "needTime": 0,
+          "needYield": 0,
+          "restoreState": 0,
+          "saveState": 0,
+          "stage": "PROJECTION_SIMPLE",
+          "transformBy": {
+            "_id": 0,
+            "batch_id": 1,
+            "driver_id": 1,
+            "event_id": 1,
+            "event_ts": 1,
+            "event_type": 1,
+            "extra_columns": 1,
+            "lat": 1,
+            "lon": 1,
+            "order_id": 1,
+            "source_file": 1,
+            "source_row_number": 1
+          },
+          "works": 9
+        },
+        "executionSuccess": true,
+        "executionTimeMillis": 1,
+        "nReturned": 8,
+        "totalDocsExamined": 8,
+        "totalKeysExamined": 8
+      },
+      "explainVersion": "1",
+      "ok": 1,
+      "queryPlanner": {
+        "indexFilterSet": false,
+        "maxIndexedAndSolutionsReached": false,
+        "maxIndexedOrSolutionsReached": false,
+        "maxScansToExplodeReached": false,
+        "namespace": "deliverypulse.raw_events",
+        "optimizationTimeMillis": 0,
+        "parsedQuery": {
+          "order_id": {
+            "$eq": "ORD-0000001"
+          }
+        },
+        "planCacheKey": "E8A53DAE",
+        "planCacheShapeHash": "4CE43193",
+        "prunedSimilarIndexes": false,
+        "queryHash": "4CE43193",
+        "rejectedPlans": [],
+        "winningPlan": {
+          "inputStage": {
+            "inputStage": {
+              "direction": "forward",
+              "indexBounds": {
+                "batch_id": [
+                  "[MinKey, MaxKey]"
+                ],
+                "event_ts": [
+                  "[MinKey, MaxKey]"
+                ],
+                "order_id": [
+                  "[\"ORD-0000001\", \"ORD-0000001\"]"
+                ],
+                "source_file": [
+                  "[MinKey, MaxKey]"
+                ],
+                "source_row_number": [
+                  "[MinKey, MaxKey]"
+                ]
+              },
+              "indexName": "order_timeline",
+              "indexVersion": 2,
+              "isMultiKey": false,
+              "isPartial": false,
+              "isSparse": false,
+              "isUnique": false,
+              "keyPattern": {
+                "batch_id": 1,
+                "event_ts": 1,
+                "order_id": 1,
+                "source_file": 1,
+                "source_row_number": 1
+              },
+              "multiKeyPaths": {
+                "batch_id": [],
+                "event_ts": [],
+                "order_id": [],
+                "source_file": [],
+                "source_row_number": []
+              },
+              "stage": "IXSCAN"
+            },
+            "stage": "FETCH"
+          },
+          "isCached": false,
+          "stage": "PROJECTION_SIMPLE",
+          "transformBy": {
+            "_id": 0,
+            "batch_id": 1,
+            "driver_id": 1,
+            "event_id": 1,
+            "event_ts": 1,
+            "event_type": 1,
+            "extra_columns": 1,
+            "lat": 1,
+            "lon": 1,
+            "order_id": 1,
+            "source_file": 1,
+            "source_row_number": 1
+          }
+        }
+      },
+      "queryShapeHash": "A666C4E6CF03E4DD0453A26216959B1C3A341D5FDF85D5AFA46DC2245DE53912",
+      "serverInfo": {
+        "gitVersion": "f9eb55a7cc900f33a722a5b32a0fdbf54385c749",
+        "host": "a8adb6d3a044",
+        "port": 27017,
+        "version": "8.0.32"
+      },
+      "serverParameters": {
+        "internalDocumentSourceGroupMaxMemoryBytes": 104857600,
+        "internalDocumentSourceSetWindowFieldsMaxMemoryBytes": 104857600,
+        "internalLookupStageIntermediateDocumentMaxSizeBytes": 104857600,
+        "internalQueryFacetBufferSizeBytes": 104857600,
+        "internalQueryFacetMaxOutputDocSizeBytes": 104857600,
+        "internalQueryFrameworkControl": "trySbeRestricted",
+        "internalQueryMaxAddToSetBytes": 104857600,
+        "internalQueryMaxBlockingSortMemoryUsageBytes": 104857600,
+        "internalQueryPlannerIgnoreIndexWithCollationForRegex": 1,
+        "internalQueryProhibitBlockingMergeOnMongoS": 0
+      }
+    },
+    "mongo_seconds": [
+      0.0016779170837253332,
+      0.0009543341584503651,
+      0.0038294170517474413,
+      0.0020670827943831682,
+      0.001412917161360383
+    ],
+    "order_id": "ORD-0000001",
+    "question": "all raw events for one order",
+    "rows_mongo": 8,
+    "rows_sql": 8,
+    "sql_median_seconds": 0.02632491709664464,
+    "sql_plan": [
+      {
+        "Execution Time": 24.506,
+        "Plan": {
+          "Actual Loops": 1,
+          "Actual Rows": 8,
+          "Actual Startup Time": 22.502,
+          "Actual Total Time": 24.475,
+          "Async Capable": false,
+          "Disabled": false,
+          "Local Dirtied Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Written Blocks": 0,
+          "Node Type": "Sort",
+          "Parallel Aware": false,
+          "Plan Rows": 10,
+          "Plan Width": 305,
+          "Plans": [
+            {
+              "Actual Loops": 1,
+              "Actual Rows": 8,
+              "Actual Startup Time": 0.347,
+              "Actual Total Time": 24.457,
+              "Async Capable": false,
+              "Disabled": false,
+              "Local Dirtied Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Written Blocks": 0,
+              "Node Type": "Gather",
+              "Parallel Aware": false,
+              "Parent Relationship": "Outer",
+              "Plan Rows": 10,
+              "Plan Width": 305,
+              "Plans": [
+                {
+                  "Actual Loops": 3,
+                  "Actual Rows": 2.67,
+                  "Actual Startup Time": 8.182,
+                  "Actual Total Time": 19.186,
+                  "Alias": "events_raw",
+                  "Async Capable": false,
+                  "Disabled": false,
+                  "Filter": "(order_id = 'ORD-0000001'::text)",
+                  "Local Dirtied Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Node Type": "Seq Scan",
+                  "Parallel Aware": true,
+                  "Parent Relationship": "Outer",
+                  "Plan Rows": 4,
+                  "Plan Width": 305,
+                  "Relation Name": "events_raw",
+                  "Rows Removed by Filter": 147071,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Hit Blocks": 1692,
+                  "Shared Read Blocks": 11340,
+                  "Shared Written Blocks": 0,
+                  "Startup Cost": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0,
+                  "Total Cost": 15330.03,
+                  "Workers": []
+                }
+              ],
+              "Shared Dirtied Blocks": 0,
+              "Shared Hit Blocks": 1692,
+              "Shared Read Blocks": 11340,
+              "Shared Written Blocks": 0,
+              "Single Copy": false,
+              "Startup Cost": 1000,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Total Cost": 16331.03,
+              "Workers Launched": 2,
+              "Workers Planned": 2
+            }
+          ],
+          "Shared Dirtied Blocks": 0,
+          "Shared Hit Blocks": 1692,
+          "Shared Read Blocks": 11340,
+          "Shared Written Blocks": 0,
+          "Sort Key": [
+            "event_ts COLLATE \"C\" NULLS FIRST",
+            "batch_id COLLATE \"C\"",
+            "source_file COLLATE \"C\"",
+            "source_row_number"
+          ],
+          "Sort Method": "quicksort",
+          "Sort Space Type": "Memory",
+          "Sort Space Used": 27,
+          "Startup Cost": 16331.2,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Total Cost": 16331.22
+        },
+        "Planning": {
+          "Local Dirtied Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Written Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.078,
+        "Triggers": []
+      }
+    ],
+    "sql_seconds": [
+      0.02632491709664464,
+      0.025397042045369744,
+      0.02468137489631772,
+      0.028300459031015635,
+      0.029018749948590994
+    ]
+  },
+  "query_sort_order": [
+    [
+      "event_ts",
+      1
+    ],
+    [
+      "batch_id",
+      1
+    ],
+    [
+      "source_file",
+      1
+    ],
+    [
+      "source_row_number",
+      1
+    ]
+  ],
+  "limitations": [
+    "One session; one order for query comparison.",
+    "MongoDB order index versus unchanged PostgreSQL raw table without an order index; not an engine-only speed comparison.",
+    "Memory is sparsely sampled; bootstrap peak and image storage were not measured.",
+    "Replay overlapped PostgreSQL integration tests and unit verification; query timings were collected after they completed.",
+    "Host peak RSS covers the loader process including imports; elapsed load time includes manifest checks but excludes process startup and client construction.",
+    "JSON object keys in captured explain output were alphabetically serialized; query_sort_order records actual ordered keys."
+  ]
+}

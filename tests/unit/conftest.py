@@ -17,6 +17,7 @@ from tests.unit.generated import SMALL_ORDERS, SMALL_SEED, GeneratedDataset, gen
 
 NO_DATABASE = "unit tests must not connect to a database"
 NO_KAFKA = "unit tests must not create a Kafka client"
+NO_MONGO = "unit tests must not create a MongoDB client"
 
 
 def _refuse_connection(*_: object, **__: object) -> NoReturn:
@@ -43,6 +44,19 @@ def no_kafka(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(confluent_kafka, "Producer", refuse)
     monkeypatch.setattr(confluent_kafka, "Consumer", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_mongo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse accidental live MongoDB access from unit tests."""
+    if importlib.util.find_spec("pymongo") is None:
+        return
+    import pymongo
+
+    def refuse(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError(NO_MONGO)
+
+    monkeypatch.setattr(pymongo, "MongoClient", refuse)
 
 
 @pytest.fixture(scope="session")

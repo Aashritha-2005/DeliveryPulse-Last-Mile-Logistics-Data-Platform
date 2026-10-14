@@ -617,6 +617,100 @@ The cluster ID may change **only after deleting the data volume**. To create a n
 generate an ID with the command above, update `KAFKA_CLUSTER_ID` in your local `.env`, then run
 `make kafka-up`. Ordinary stops need only `make kafka-down`; keep the ID and volumes intact.
 
+## MongoDB raw event store setup
+
+MongoDB Community (SSPL) uses the optional `nosql` overlay in `docker-compose.mongo.yml`.
+The core profile requires no MongoDB settings. Bootstrap and healthy startup were verified
+on 2026-10-15; load/replay and query measurements are recorded in `docs/benchmarks.md`.
+The user adds these settings to their existing local `.env`, replacing each placeholder:
+
+```dotenv
+MONGO_PORT=27017
+MONGO_DB=deliverypulse
+MONGO_ROOT_USER=CHANGE_ME
+MONGO_ROOT_PASSWORD=CHANGE_ME
+MONGO_APP_USER=CHANGE_ME
+MONGO_APP_PASSWORD=CHANGE_ME
+MONGO_READONLY_USER=CHANGE_ME
+MONGO_READONLY_PASSWORD=CHANGE_ME
+```
+
+Choose three distinct usernames (3–40 lowercase letters, digits or underscores, beginning
+with a letter) and three distinct passwords (20–128 letters or digits). Keep them private.
+The application user can read and insert raw documents only. The query user can read and
+inspect collection statistics/indexes; neither can administer users or drop data. Bootstrap
+creates corresponding isolated users and collections in `deliverypulse_test` for live tests.
+
+With other heavy profiles stopped, the user runs from the project root:
+
+```bash
+export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+make mongo-env-check
+make mongo-up
+```
+
+`mongo-up` stops any running MongoDB server before the offline bootstrap opens its volume,
+then starts the server and waits for health. Expect a short interruption on repeated startup.
+Bootstrap runs with no network access and administrator credentials; the long-running server
+receives no credentials. Both run as the pinned image's `mongod` user. Authentication is
+enabled and the published port binds only to 127.0.0.1. Transport is unencrypted for this local
+synthetic-data demo. The healthcheck proves responsiveness; live role tests must prove access
+control. Failed bootstrap exits nonzero without printing credential-bearing server errors.
+
+`deliverypulse_mongo_data` stores the database, indexes, journal and users under `/data/db`.
+`deliverypulse_mongo_config` names the image's declared `/data/configdb` mount explicitly to
+avoid anonymous volumes; this standalone deployment does not run a sharded config server.
+Both persist across `make mongo-down`. Each container has a 768 MiB limit and a 0.25 GiB
+WiredTiger cache; bootstrap and the main server must never open the volume simultaneously.
+These are configured limits, not measured usage. Bootstrap also runs mongod, so it needs the
+same memory limit rather than the roadmap's proposed 256 MiB client-only allowance.
+
+For diagnostics, run `make mongo-logs`; for a normal stop, run `make mongo-down`.
+Do not delete volumes to troubleshoot without first reviewing the failure. Any deliberate
+volume deletion permanently loses MongoDB documents, indexes and users and requires an
+explicit user-run reset procedure. PostgreSQL grants and data do not change in this setup.
+
+Install the optional client with `uv sync --locked --group nosql`. Plain `uv sync --locked`
+does not install PyMongo or dnspython. For development lint, include all three optional groups:
+`uv sync --locked --group bench --group streaming --group nosql`. With services running:
+
+```bash
+make test-mongo
+make mongo-load
+make mongo-load
+make mongo-query
+make mongo-stats
+```
+
+`mongo-load` reads the only dataset under `data/raw`, or accepts `DATASET=<name>`. Replay must
+report zero inserted and zero modified rows. The loader checks the host's 10 GiB free-space
+floor before loading and between chunks; Docker virtual-disk capacity is checked separately
+through `mongo-stats`. Run one loader at a time. Partial failures retain committed inserts;
+rerun the identical immutable source to finish. Existing documents are never replaced.
+
+`mongo-query` selects an existing order and reports its identity, equal-result check, five
+query samples per store after a warm-up, medians and execution plans. For a specific order:
+`uv run --locked --group nosql python -m src.nosql.compare --order-id <order-id>`.
+Both stores project the same fields. PostgreSQL uses the existing ETL role in a read-only
+transaction because the dashboard read-only role cannot access raw tables.
+
+`test-mongo` requires PostgreSQL raw events already loaded. It uses MongoDB's separate `_test`
+database and leaves a few immutable fixtures per run. Teardown uses no administrator and
+drops no databases. CI creates fresh services and loads its own synthetic fixture; local
+verification does not establish a green GitHub run.
+
+**Deliberate reset — user-run only:** permanently deletes all MongoDB documents, indexes,
+users and journal data. PostgreSQL is unaffected. Stop all loaders and queries first.
+Do not reset volumes to work around a network pull error.
+
+```bash
+make mongo-down
+docker compose -f docker-compose.yml -f docker-compose.mongo.yml --profile nosql rm -f mongo mongo-init
+docker volume rm deliverypulse_mongo_data deliverypulse_mongo_config
+```
+
+The user can then recreate the empty store with `make mongo-up` and reload with `make mongo-load`.
+
 ## Scale benchmark (pandas vs PySpark)
 
 Needs the `bench` dependency group (`uv sync --locked --group bench`) and a **Java 21** runtime
@@ -667,12 +761,13 @@ also runs weekly. Both have `permissions: contents: read` and use no repository 
 
 | Workflow | Job | What it runs |
 |---|---|---|
-| `tests.yml` | Lint and type check | `uv sync --locked --group bench`, `make lint` (ruff, mypy over `src`, `tests` and `scripts/*.py`), `make actionlint` |
+| `tests.yml` | Lint and type check | `uv sync --locked --group bench --group streaming --group nosql`, `make lint` (ruff, mypy over `src`, `tests` and `scripts/*.py`), `make actionlint` |
 | | Unit tests (no services) | `make test` |
 | | Integration tests and coverage (PostgreSQL) | `.env` with generated, masked passwords; `make up`; `make test-integration`; `make coverage`; container logs on failure; `make down` |
 | | Airflow DAG parse check | `.env` with generated, masked passwords; `make airflow-dag-check` |
 | | Object store tests | `.env` with generated, masked passwords and keys; `make up`; `make s3-up`; `make test-s3`; logs on failure; `make s3-down`, `make down` |
 | | Benchmark engines | `uv sync --locked --group bench`; the pandas/Spark equivalence tests with the runner's Java 21 |
+| | NoSQL tests | Isolated PostgreSQL and MongoDB fixtures; `make test-mongo`, two `make mongo-load` calls and `make mongo-query`; stop services preserving volumes |
 | | Determinism check (Linux) | `make generate-check ORDERS=1500 SEED=7` |
 | `security.yml` | Secret scan (gitleaks) | `make scan` (working tree), then `gitleaks git` over the full history |
 | | Dependency audit | `make audit` |
@@ -777,6 +872,7 @@ removes it if so, and reports clearly if it did not exist. Aborting (any answer 
 | `core` | PostgreSQL | ~50-150 MiB idle; up to a few hundred MiB under analytical queries with default settings (`shared_buffers` 128 MB) | 1 GiB (`mem_limit`) |
 | `s3` | SeaweedFS (master, volume, filer and S3 gateway in one process) | Measured 2026-10-14: 88-152 MiB after start; up to 403.3 MiB after exporting and checking the default dataset twice | 768 MiB (`mem_limit`; raised from 512 MiB ahead of larger datasets) |
 | `streaming` | Kafka broker | Measured 2026-10-15: 362.5 MiB idle; largest sample 507.3 MiB | 1 GiB (`mem_limit`) |
+| `nosql` | MongoDB server | Measured 2026-10-15: 121.3 MiB baseline; 433.8 MiB during load; 487 MiB after replay (sparse samples) | 768 MiB; WiredTiger cache 0.25 GiB. Offline bootstrap has the same limit and runs separately |
 | `core` + `airflow` | PostgreSQL, airflow-db, api-server, scheduler, dag-processor | Measured 2026-10-14: about 1.0-1.1 GiB idle; peak 2.12-2.26 GiB during a full DAG run | sum of limits 5.25 GiB (per-container limits in "Airflow orchestration") |
 
 **Airflow, measured 2026-10-14** (`make airflow-stats`, sampled every few seconds while the last

@@ -328,3 +328,34 @@ idempotency comparisons exclude them. The checks themselves are listed in
 
 `audit.pipeline_runs` also stores each batch's `window_start` and `window_end` (from
 `batch.json`). The late-event and freshness checks use them.
+
+## 9. MongoDB raw event documents
+
+The optional `deliverypulse.raw_events` collection stores one document per source row,
+including malformed values and repeated or missing event IDs. PostgreSQL remains the analytics
+store. No PostgreSQL schema or grants change for this extension.
+
+| Field | Representation and meaning |
+|---|---|
+| `_id` | SHA-256 of the canonical JSON array `[batch_id, source_file, source_row_number]`; unique source-row identity |
+| `batch_id`, `source_file`, `source_row_number` | Same provenance as `raw.events_raw`; row number starts at 1 |
+| `event_id`, `order_id`, `driver_id`, `event_type`, `event_ts`, `lat`, `lon` | Same text/NULL representation as PostgreSQL raw columns; no cleaning |
+| `extra_columns` | Unknown fields, or an `_raw_line` wrapper for unparseable input, following the PostgreSQL raw contract |
+| `raw_line` | Original JSONL line without its line terminator |
+| `ingested_at` | First insertion time in UTC; never changed on replay |
+
+Bootstrap creates these indexes; the application user cannot create or drop them:
+
+| Index | Keys | Reason |
+|---|---|---|
+| `_id_` | `_id` | Unique source identity and replay lookups |
+| `order_timeline` | `order_id, event_ts, batch_id, source_file, source_row_number` | Order filter plus deterministic text-time ordering |
+| `driver_timeline` | `driver_id, event_ts, batch_id, source_file, source_row_number` | Driver timeline access; this query is not benchmarked yet |
+| `batch_lookup` | `batch_id` | Batch reconciliation and inspection |
+
+The comparison projects the same raw fields and provenance from both stores, retaining
+duplicates. Mongo uses simple collation; SQL explicitly uses `COLLATE "C"` and `NULLS FIRST`.
+Malformed timestamps retain their text ordering; this is not a cleaned chronological query.
+Mongo ingestion timestamps, `_id`, and `raw_line` are excluded because PostgreSQL has different
+ingestion metadata and stores parsed raw fields. See [measurements](benchmarks.md) and
+[the design decision](decisions/nosql.md).

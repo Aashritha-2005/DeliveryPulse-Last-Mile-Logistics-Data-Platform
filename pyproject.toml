@@ -36,6 +36,11 @@ bench = [
 streaming = [
     "confluent-kafka==2.15.1",
 ]
+nosql = [
+    # dnspython pinned: newer releases fail the 14-day rule when added (2026-10-15).
+    "dnspython==2.8.0",
+    "pymongo==4.18.2",
+]
 
 [tool.uv]
 # Not an installable package: code is run from the project root via `uv run`.
@@ -92,4 +97,5 @@ markers = [
     "s3: tests that need PostgreSQL and the local object store (make up, make s3-up)",
     "spark: tests that need a Java 21 runtime and the bench dependency group (make test-spark)",
     "kafka: tests against Kafka and PostgreSQL (make test-kafka)",
+    "mongo: tests against MongoDB and PostgreSQL (make test-mongo)",
 ]

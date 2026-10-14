@@ -37,7 +37,7 @@ jobs:
           version: ${{ env.UV_VERSION }}
       - name: Install locked dependencies, including the benchmark engines
         # The bench group is installed so mypy also checks src/bench and scripts/benchmark.py.
-        run: uv sync --locked --group bench --group streaming
+        run: uv sync --locked --group bench --group streaming --group nosql
       - name: Lint, format check and mypy (make lint)
         run: make lint
       - name: Validate workflows and Dependabot config (make actionlint)
@@ -80,7 +80,7 @@ jobs:
           # The AIRFLOW_ and S3_ lines are deleted on purpose: the next step proves the core stack
           # starts without them (those services live in docker-compose.airflow.yml and
           # docker-compose.s3.yml).
-          grep -v -E '^(AIRFLOW_|S3_|KAFKA_)' .env.example > .env
+          grep -v -E '^(AIRFLOW_|S3_|KAFKA_|MONGO_)' .env.example > .env
           for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD; do
             value="$(openssl rand -hex 24)"
             echo "::add-mask::${value}"
@@ -117,7 +117,7 @@ jobs:
           persist-credentials: false
       - name: Create .env with generated, masked values (no object-store variables)
         run: |
-          grep -v -E '^(S3_|KAFKA_)' .env.example > .env
+          grep -v -E '^(S3_|KAFKA_|MONGO_)' .env.example > .env
           for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD \
                       AIRFLOW_DB_PASSWORD AIRFLOW_FERNET_KEY AIRFLOW_JWT_SECRET; do
             value="$(openssl rand -hex 24)"
@@ -150,7 +150,7 @@ jobs:
         run: uv sync --locked
       - name: Create .env with generated, masked passwords and keys (no AIRFLOW_ variables)
         run: |
-          grep -v -E '^(AIRFLOW_|KAFKA_)' .env.example > .env
+          grep -v -E '^(AIRFLOW_|KAFKA_|MONGO_)' .env.example > .env
           for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD \
                       S3_ADMIN_ACCESS_KEY S3_ADMIN_SECRET_KEY S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY; do
             value="$(openssl rand -hex 24)"
@@ -207,7 +207,7 @@ jobs:
         run: uv sync --locked --group streaming
       - name: Configure local services
         run: |
-          grep -v -E '^(AIRFLOW_|S3_)' .env.example > .env
+          grep -v -E '^(AIRFLOW_|S3_|MONGO_)' .env.example > .env
           cluster_id="$(uv run python -c 'import base64, uuid; print(base64.urlsafe_b64encode(uuid.uuid4().bytes).decode("ascii").rstrip("="))')"
           sed -i "s/^KAFKA_CLUSTER_ID=CHANGE_ME\$/KAFKA_CLUSTER_ID=${cluster_id}/" .env
           for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD; do
@@ -225,6 +225,50 @@ jobs:
       - name: Stop services, preserving volumes
         if: always()
         run: make kafka-down && make down
+
+  mongo:
+    name: NoSQL tests (MongoDB raw store and SQL comparison)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked optional client
+        run: uv sync --locked --group nosql
+      - name: Configure isolated local services
+        run: |
+          grep -v -E '^(AIRFLOW_|S3_|KAFKA_)' .env.example > .env
+          for role in ROOT APP READONLY; do
+            sed -i "s/^MONGO_${role}_USER=CHANGE_ME\$/MONGO_${role}_USER=mongo_$(echo "${role}" | tr '[:upper:]' '[:lower:]')/" .env
+          done
+          for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD MONGO_ROOT_PASSWORD MONGO_APP_PASSWORD MONGO_READONLY_PASSWORD; do
+            value="$(openssl rand -hex 24)"
+            echo "::add-mask::${value}"
+            sed -i "s/^${name}=CHANGE_ME\$/${name}=${value}/" .env
+          done
+          if grep -q CHANGE_ME .env; then
+            echo "An environment placeholder remains" >&2
+            exit 1
+          fi
+      - name: Start services and load PostgreSQL fixture
+        run: |
+          make up
+          make mongo-up
+          make generate ORDERS=1500 SEED=7
+          make load
+      - name: Verify immutable loading, roles and SQL equivalence
+        run: |
+          make test-mongo
+          make mongo-load
+          make mongo-load
+          make mongo-query
+      - name: Stop services, preserving volumes
+        if: always()
+        run: make mongo-down && make down
 
   determinism:
     name: Determinism check (Linux)

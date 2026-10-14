@@ -1,5 +1,10 @@
 # DeliveryPulse
 
+The optional raw document store uses **MongoDB Community (SSPL-licensed)**: 441,222 source
+rows loaded, replayed with zero inserts or modifications, and an eight-row raw-event query
+matched PostgreSQL. See [measurements and limitations](docs/benchmarks.md#4-mongodb-raw-event-store-2026-10-15)
+and the [design decision](docs/decisions/nosql.md).
+
 [![Tests](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/tests.yml)
 [![Security](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/security.yml/badge.svg)](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

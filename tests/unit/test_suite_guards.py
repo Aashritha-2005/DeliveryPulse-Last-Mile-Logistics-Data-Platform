@@ -22,7 +22,7 @@ def isolated(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> pyte
     monkeypatch.setenv("PYTHONPATH", str(PROJECT_ROOT))
     pytester.makeini(
         "[pytest]\nmarkers =\n    unit: unit\n    integration: integration\n    s3: s3\n"
-        "    spark: spark\n    kafka: kafka\n"
+        "    spark: spark\n    kafka: kafka\n    mongo: mongo\n"
     )
     return pytester
 
@@ -54,7 +54,7 @@ def test_database_and_store():
     result = isolated.runpytest_subprocess()
     output = result.stdout.str() + result.stderr.str()
     assert result.ret == pytest.ExitCode.USAGE_ERROR
-    assert "'unit', 'integration', 's3', 'spark' or 'kafka'" in output
+    assert "'unit', 'integration', 's3', 'spark', 'kafka' or 'mongo'" in output
     assert "test_unmarked: no suite marker" in output
     assert "test_both: markers unit, integration" in output
     assert "test_database_and_store: markers integration, s3" in output
@@ -85,9 +85,13 @@ def test_spark_engine():
 @pytest.mark.kafka
 def test_kafka_stream():
     pass
+
+@pytest.mark.mongo
+def test_mongo_store():
+    pass
 """
     )
-    isolated.runpytest_subprocess().assert_outcomes(passed=5)
+    isolated.runpytest_subprocess().assert_outcomes(passed=6)
 
 
 def test_unit_guard_refuses_database_connections(isolated: pytest.Pytester) -> None:

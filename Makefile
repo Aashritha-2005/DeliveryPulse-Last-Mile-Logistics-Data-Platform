@@ -47,6 +47,7 @@ DAG_ID := delivery_pipeline
 # core targets need no S3_ variable.
 COMPOSE_S3 := docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile s3
 COMPOSE_KAFKA := docker compose -f docker-compose.yml -f docker-compose.kafka.yml --profile streaming
+COMPOSE_MONGO := docker compose -f docker-compose.yml -f docker-compose.mongo.yml --profile nosql
 # Benchmark (bench dependency group; PySpark needs a Java 21 runtime). Every benchmark command
 # resolves JAVA_HOME with java_home -v 21 and fails with a clear message when it is missing.
 JAVA_21 = $$(/usr/libexec/java_home -v 21 2>/dev/null || true)
@@ -63,6 +64,9 @@ ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STO
 .PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset s3-up s3-down s3-logs s3-stats lake-export lake-check test-s3 test-spark bench-data benchmark bench-clean db-sizes
 
 help:
+	@echo "  make mongo-env-check   validate MongoDB settings without printing values"
+	@echo "  make mongo-up          stop MongoDB, initialize users/indexes offline, start healthy"
+	@echo "  make mongo-down        stop MongoDB; KEEPS both volumes"
 	@echo "  make kafka-env-check   validate local streaming configuration (values never printed)"
 	@echo "  make kafka-up          start Kafka, wait healthy, create the three explicit topics"
 	@echo "  make kafka-down        stop only Kafka services; KEEPS volumes and PostgreSQL"
@@ -128,6 +132,37 @@ lint:
 	$(UV_RUN) ruff check .
 	$(UV_RUN) ruff format --check .
 	$(UV_RUN) mypy src tests $(PY_SCRIPTS)
+
+.PHONY: mongo-env-check mongo-up mongo-down mongo-logs
+mongo-env-check:
+	$(UV_RUN) --locked python -m src.nosql.config
+
+# Only one mongod may open the data volume. The user runs these service actions.
+mongo-up: mongo-env-check
+	$(COMPOSE_MONGO) stop mongo
+	$(COMPOSE_MONGO) run --rm --no-deps mongo-init
+	$(COMPOSE_MONGO) up -d --no-deps --wait --wait-timeout 180 mongo
+
+mongo-down:
+	$(COMPOSE_MONGO) stop mongo
+
+mongo-logs:
+	$(COMPOSE_MONGO) logs --tail 100 mongo
+
+.PHONY: mongo-load mongo-query mongo-stats test-mongo
+mongo-load:
+	$(UV_RUN) --locked --group nosql python -m src.nosql.load_mongo --raw-dir $(RAW_DIR) $(DATASET_ARG)
+
+mongo-query:
+	$(UV_RUN) --locked --group nosql python -m src.nosql.compare
+
+mongo-stats:
+	$(UV_RUN) --locked --group nosql python -m src.nosql.stats
+	$(COMPOSE_MONGO) exec -T mongo sh -c 'du -sk /data/db /data/configdb; df -k /data/db'
+	docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}' deliverypulse-mongo-1
+
+test-mongo:
+	$(UV_RUN) --locked --group nosql pytest -m mongo
 
 .PHONY: kafka-env-check kafka-up kafka-down kafka-logs
 kafka-env-check:

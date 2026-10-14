@@ -147,3 +147,13 @@ jobs:
           # Same report-only policy as the other upstream service images.
           exit-code: "0"
           format: table
+      - name: MongoDB image scan (report only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: mongodb/mongodb-community-server:8.0.32-ubi9-slim-20260930T065105Z@sha256:67fbda8e00b63557d4bb797cb85324f456aa3c001bbb2528acdb969a1261c2a2
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # Same report-only policy as the other upstream service images.
+          exit-code: "0"
+          format: table

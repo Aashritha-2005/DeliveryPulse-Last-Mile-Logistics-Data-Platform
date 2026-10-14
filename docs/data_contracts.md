@@ -571,3 +571,22 @@ Integrity checks:
   - A check may count more than its own defect type only where the difference equals exactly
     another type's manifest count, documented in `EXPLAINED_DIFFERENCES`. Any other difference
     fails.
+
+## MongoDB raw-row preservation
+
+The optional document store reads only delivery-event JSONL files from existing raw batches.
+It verifies every event file's SHA-256 against `batch.json` before inserting, processes at
+most 5,000 documents per chunk, and checks the source hash again after each batch. Files must
+remain immutable during the run. Stored identity is `(batch_id, source_file, source_row_number)`;
+event IDs do not determine uniqueness. Null, malformed and duplicate event rows remain present.
+
+Replay compares all stored content except first-ingestion time. Equal rows are counted as
+duplicates, missing rows are inserted, and changed content fails without replacing existing
+documents. A chunk checks existing content before inserting any missing rows. The whole load
+is not transactional: a failure may leave earlier chunks or part of an insertion committed;
+rerunning the identical source completes the load. Concurrent loaders are unsupported and a
+duplicate-key race fails explicitly rather than being silently ignored.
+
+Only the bootstrap administrator creates collections, indexes and users. The loader role
+has `find` and `insert` on `raw_events`; the query role has `find`, index/statistics inspection
+and database statistics. Neither application identity can update, delete or administer users.

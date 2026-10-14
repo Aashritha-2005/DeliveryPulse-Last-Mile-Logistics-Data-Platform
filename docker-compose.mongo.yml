@@ -1,0 +1,59 @@
+# MongoDB Community (SSPL). User-confirmed multi-platform index, 2026-10-15.
+x-mongo-image: &mongo-image mongodb/mongodb-community-server:8.0.32-ubi9-slim-20260930T065105Z@sha256:67fbda8e00b63557d4bb797cb85324f456aa3c001bbb2528acdb969a1261c2a2
+
+services:
+  mongo-init:
+    image: *mongo-image
+    profiles: [nosql]
+    user: mongod
+    network_mode: none
+    entrypoint: [/bin/bash, /bootstrap/bootstrap.sh]
+    environment:
+      MONGO_DB: ${MONGO_DB:?set MONGO_DB in .env}
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:?set MONGO_ROOT_USER in .env}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in .env}
+      MONGO_APP_USER: ${MONGO_APP_USER:?set MONGO_APP_USER in .env}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?set MONGO_APP_PASSWORD in .env}
+      MONGO_READONLY_USER: ${MONGO_READONLY_USER:?set MONGO_READONLY_USER in .env}
+      MONGO_READONLY_PASSWORD: ${MONGO_READONLY_PASSWORD:?set MONGO_READONLY_PASSWORD in .env}
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+      - ./docker/mongo:/bootstrap:ro
+    tmpfs: [/tmp]
+    mem_limit: 768m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  mongo:
+    image: *mongo-image
+    profiles: [nosql]
+    user: mongod
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    entrypoint: [mongod]
+    command: [--auth, --bind_ip_all, --dbpath, /data/db, --wiredTigerCacheSizeGB, "0.25"]
+    ports:
+      - "127.0.0.1:${MONGO_PORT:?set MONGO_PORT in .env}:27017"
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    mem_limit: 768m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 60s
+
+volumes:
+  mongo_data:
+    name: deliverypulse_mongo_data
+  mongo_config:
+    name: deliverypulse_mongo_config
