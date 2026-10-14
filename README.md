@@ -74,6 +74,10 @@ flowchart LR
   vectorised pandas and in PySpark over 50,000 to 2,000,000 orders, each run in its own process
   with a warm-up and three measured runs, under a 4 GiB memory limit per run and a 4 GiB disk
   budget. It reports where Spark overtakes pandas and where pandas runs out of memory.
+- **Local streaming demo.** Kafka order and GPS-ping messages land in
+  PostgreSQL with provenance, conflict detection and replay-safe identities. The measured
+  correctness run inserted 500 records and sent five malformed records to the DLQ; replay
+  inserted zero rows. [Throughput, latency and limitations](docs/benchmarks.md#3-kafka-streaming-2026-10-15).
 - **Dashboard.** A Streamlit page on `127.0.0.1:8501`, connected as the read-only role. It
   shows, for a date range and a set of cities:
   - headline KPIs;
@@ -152,8 +156,8 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 | Incremental metric refresh vs full rebuild | identical row counts (`make metrics`) |
 | Index tuning, `order_event_summary` (median of 3) | 72.487 ms to 25.323 ms ([benchmarks](docs/benchmarks.md)) |
 | Dashboard queries as the read-only role (`make dashboard-check`) | 7 queries in 0.10 s on the full dataset; max RSS 76,120,064 bytes |
-| Tests (2026-10-15) | 470 unit (10.97 s), 155 integration (155.56 s), 5 Spark equivalence (18.27 s); earlier live object-store check: 3 passed (2026-10-14, 8.21 s) |
-| Coverage of `src/` (`make coverage`, 2026-10-15) | 75 % unit only; 83.35 % combined unit + integration, with no exclusions |
+| Tests (2026-10-15) | 509 unit (9.86 s), 160 integration (142.71 s), 5 Spark equivalence (19.88 s), 4 Kafka (4.36 s); earlier live object-store check: 3 passed (2026-10-14, 8.21 s) |
+| Coverage of `src/` (`make coverage`, 2026-10-15) | 73 % unit only; 80.89 % combined unit + integration, with no exclusions |
 | Lake export (`make lake-export`) | 118 objects, 1,093,033 rows, 57,501,391 bytes in 8.20 s; a replay rewrites the same objects and deletes nothing. Streaming the objects cut the peak memory from 923,090,944 to 653,492,224 bytes |
 | Database size by schema (`make db-sizes`) | 686.9 MiB of project tables: raw 218.7, staging 214.9, audit 174.8, analytics 78.6 MiB |
 | Lake read-back (`make lake-check`) | raw 541,536 rows, cleaned 539,047, aggregated 12,450; every key, row count and byte matches its source |
@@ -196,7 +200,9 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 - **Benchmark engine tests** (`make test-spark`, marker `spark`), needing only a Java 21
   runtime: the pandas and the PySpark engine must return identical counts and aggregates on the
   fixture dataset, on several shards, and on both read layouts.
-- **Attribution.** Every test carries exactly one of the four markers; collection stops
+- **Kafka tests** (`make test-kafka`, marker `kafka`), against the single broker and PostgreSQL:
+  valid delivery, malformed records in the DLQ, replay and restart after a committed write.
+- **Attribution.** Every test carries exactly one of the five markers; collection stops
   otherwise, so a failure always belongs to one suite.
 
 ## Continuous integration
@@ -250,8 +256,11 @@ Further reading: [data contracts](docs/data_contracts.md) ·
 
 ## Known limitations
 
-- **Scope.** Batch and local only. Streaming, distributed processing and cloud resources are not
-  in this repository yet.
+- **Scope.** Local batch processing and a single-broker streaming landing demo. Streaming uses
+  stateless contract rules and writes only to `raw.stream_events`; it does not update analytics
+  or the lake.
+  See [Kafka setup and demo commands](docs/operations.md#kafka-streaming-setup).
+  Distributed deployment and cloud resources are not implemented.
 - **The lake is local and write-only for the pipeline.** It runs on a local SeaweedFS store;
   real AWS S3 is a settings change but has not been used. No pipeline stage reads the lake yet;
   `make lake-check` reads it back to prove it matches its sources. The export streams one object
@@ -287,6 +296,6 @@ Further reading: [data contracts](docs/data_contracts.md) ·
 - **Spark is not part of the pipeline.** It is an extra dependency group and needs Java 21; no
   pipeline command uses it. 5,000,000 orders was not benchmarked because it would exceed the
   4 GiB disk budget the benchmark holds itself to.
-- **Coverage.** Unit-only coverage is 75 %. The command-line entry points and report writers
-  are exercised by `make` targets rather than by pytest, and the object store and Spark suites
+- **Coverage.** Unit-only coverage is 73 %. The command-line entry points and report writers
+  are exercised by `make` targets rather than by pytest, and the object store, Spark and Kafka suites
   are not counted in the coverage figure.

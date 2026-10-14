@@ -319,3 +319,76 @@ the initial 50k spill factor was 2.04. Intermediate sizes above 2M were not test
 **Both engines agree.** At every size where both finished (50k, 250k, 500k, 1M) the two engines
 returned identical counts and identical daily aggregates, row for row; `make test-spark` checks
 the same thing on the fixture dataset in CI.
+
+## 3. Kafka streaming (2026-10-15)
+
+Measured on macOS 26.6.2, Apple Silicon arm64, 10 physical/logical CPU cores, 16 GiB host RAM;
+Kafka 4.3.1 and PostgreSQL in Docker Desktop, Python 3.12.10, confluent-kafka 2.15.1 on the host.
+One session, one initial pass and one separate replay per source slice; no repeated-run confidence
+intervals. Exact outputs and resource snapshots: [stream-2026-10-15.json](benchmarks/stream-2026-10-15.json).
+
+Commands, sequentially:
+
+```bash
+make kafka-demo COUNT=500 RATE=500 TRIAL=0 MALFORMED=5
+make kafka-demo COUNT=100000 RATE=500 TRIAL=1 MALFORMED=0
+make kafka-demo COUNT=100000 RATE=2000 TRIAL=2 MALFORMED=0
+make kafka-demo COUNT=100000 RATE=0 TRIAL=3 MALFORMED=0
+```
+
+Source: `data/raw/seed-42_orders-50000_cfg-449e309b`. Correctness uses 250 order versions and
+250 pings plus five malformed messages. Each larger trial uses a distinct 10,000-order-version /
+90,000-ping slice. Selection deterministically filters invalid and repeated source identities;
+this is a controlled stream workload, not the complete messy batch pipeline. No source files
+were rewritten. Consumer starts before the producer. Each pass has its own group and snapshots
+current topic offsets. Source selection is excluded from timing; consumer connection setup,
+processing and synchronous commits are included. Batches are at most 500 messages or 250 ms.
+Latency is host send timestamp to return from committed database work, including queueing;
+DLQ messages are excluded from latency. Initial and replay rates must not be conflated.
+
+| Trial | Pass | Records | Inserted | Duplicates | DLQ | Consumer records/s | Producer records/s | Seconds | p50 / p95 / max latency (ms) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| 500 + 5 malformed | initial | 505 | 500 | 0 | 5 | 484.72 | 496.97 | 1.042 | 149.808 / 269.941 / 293.720 |
+| 500 + 5 malformed | replay | 500 | 0 | 500 | 0 | 443.76 | 500.16 | 1.127 | 244.110 / 434.888 / 482.595 |
+| 100k at 500/s | initial | 100000 | 100000 | 0 | 0 | 499.95 | 499.99 | 200.021 | 164.127 / 287.816 / 755.431 |
+| 100k at 500/s | replay | 100000 | 0 | 100000 | 0 | 499.78 | 499.98 | 200.087 | 306.226 / 529.346 / 1081.231 |
+| 100k at 2000/s | initial | 100000 | 100000 | 0 | 0 | 1998.84 | 1999.80 | 50.029 | 176.712 / 291.528 / 743.923 |
+| 100k at 2000/s | replay | 100000 | 0 | 100000 | 0 | 1863.56 | 1999.96 | 53.661 | 1876.476 / 3696.625 / 3920.232 |
+| 100k unthrottled | initial | 100000 | 100000 | 0 | 0 | 11580.93 | 53633.62 | 8.635 | 4186.620 / 6374.134 / 6758.851 |
+| 100k unthrottled | replay | 100000 | 0 | 100000 | 0 | 1922.44 | 94705.38 | 52.017 | 25483.584 / 48573.778 / 51031.073 |
+
+
+Landing row counts progressed **0 → 500 → 100,500 → 200,500 → 300,500**; every replay inserted
+zero rows. All valid messages were acknowledged by the producer and reconciled at the consumer.
+The correctness pass sent exactly five malformed messages to the DLQ.
+
+**Interpretation.** Insert throughput kept up with both throttled rates. Unthrottled inserts
+reached 11,580.93 records/s, but replay reached only 1,922.44 records/s. Replay performs an extra
+content-hash lookup for each conflicting primary key; its sequential lookups are a plausible
+bottleneck, not a separately isolated causal measurement. Unthrottled replay accumulated a
+backlog: p95 latency was 48,573.778 ms. This is not a low-latency guarantee at arbitrary rates.
+
+**Resources.** `make kafka-stats` recorded broker idle memory 362.5 MiB and a largest sampled
+value of 507.3 MiB. Sparse snapshots are not a continuously measured peak. PostgreSQL's largest
+sample was 185.3 MiB. Kafka data directory usage (`du -sk`, including internal topics) grew
+from 184 KiB to 213,464 KiB after the runs; the largest sample was 213,480 KiB. Segment retention
+and metadata changes mean disk use need not be monotonic. Configured limits are 1 GiB for the
+broker and 256 MiB for the topic initializer; they are not usage measurements.
+
+The combined host demo process (source selection, producer and consumer) had measured peak RSS
+121.047 MiB at 2,000/s and 170.531 MiB unthrottled. Peak-RSS instrumentation was added after the
+500/s trial; that trial has only instantaneous RSS samples of 16.52 and 91.02 MiB for the
+processes with the demo module in their arguments (process roles were not captured).
+No consumer-only peak RSS was measured. Do not compare these scopes as equivalent.
+A resource probe initially encountered an inaccessible system process; the later probe ignored
+inaccessible processes and reported only the running demo processes.
+
+**Limits and estimates.** Single broker, one partition per input, one consumer, local plaintext,
+no analytics updates, no S3 writes, stateless validation only, at-least-once DLQ. The source
+selection and latency arrays are bounded by the demo count. For planning only, reserve **2 GiB
+of additional disk [estimate]** for Kafka/image/database growth and **1–2 GiB combined running
+memory [estimate]** for the local core + stream workload. These are not hard caps or production
+capacity predictions. Actual image storage was not measured. No Spark or Airflow workload ran
+during the stream trials; lightweight editing/lint and resource probes occurred during the
+runs. CI configuration is prepared; its new Kafka job has not yet been run on GitHub.
+

@@ -84,7 +84,7 @@ jobs:
         run: make bandit
 
   trivy:
-    name: Trivy (filesystem, PostgreSQL, Airflow and SeaweedFS images)
+    name: Trivy (filesystem and service images)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -135,5 +135,15 @@ jobs:
           ignore-unfixed: true
           # Report only, as for the other third-party images: the object store is a local
           # development service whose base-image CVEs this project cannot fix.
+          exit-code: "0"
+          format: table
+      - name: Kafka image scan (report only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # Same report-only policy as the other upstream service images.
           exit-code: "0"
           format: table

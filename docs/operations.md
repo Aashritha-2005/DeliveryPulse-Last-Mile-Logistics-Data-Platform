@@ -490,6 +490,133 @@ found for STS service`. It concerns its optional STS (temporary credentials) ser
 identity file is loaded: the admin key creates the bucket, and the live tests prove the pipeline
 key's limits.
 
+## Kafka streaming setup
+
+The single-broker overlay is `docker-compose.kafka.yml`; the core profile needs no Kafka
+settings. PLAINTEXT is an explicit local-demo choice: the host listener binds only to
+`127.0.0.1`. There is no authentication or transport encryption; use synthetic local data.
+Internal listeners are available to containers on the Compose network.
+
+Add these non-secret settings to the existing local `.env`; do not replace its database or
+other settings. The cluster ID is a public identifier, not a credential. Keep it fixed while
+the Kafka data volume exists. If port 9092 is occupied, change both port settings together.
+
+```dotenv
+KAFKA_CLUSTER_ID=CHANGE_ME
+KAFKA_PORT=9092
+KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
+KAFKA_TOPIC_ORDERS=deliverypulse.orders.v1
+KAFKA_TOPIC_PINGS=deliverypulse.driver_pings.v1
+KAFKA_TOPIC_DLQ=deliverypulse.events.dlq.v1
+```
+
+Generate a new public cluster ID with the pinned image, then replace `CHANGE_ME` in your
+local `.env` with the output before starting Kafka:
+
+```bash
+docker run --rm apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837 /opt/kafka/bin/kafka-storage.sh random-uuid
+```
+
+From the project root, with other heavy profiles stopped:
+
+```bash
+export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+make kafka-env-check
+make kafka-up
+```
+
+Startup waits for broker health and then runs the explicit three-topic initializer. Each
+topic has one partition, replication factor one, one-hour retention and 256 MiB retention
+per partition. Retention deletes closed segments asynchronously, so this is not a hard disk
+cap. Automatic topic creation is disabled. Existing topics are retained by the initializer;
+it does not alter their configuration. The pinned image is the user-confirmed multi-platform
+index for `apache/kafka:4.3.1`.
+
+On failure, run `make kafka-logs` and report the error. Do not remove volumes or change the
+cluster ID to work around a startup error. `make kafka-down` stops only the streaming
+services and retains volumes and PostgreSQL. Broker memory limit: 1 GiB; initializer limit:
+256 MiB. These are configured limits, not measured usage. Measured throughput and latency
+are recorded in the Kafka streaming section of `docs/benchmarks.md`.
+
+Install the optional locked client with `uv sync --locked --group streaming`. A default
+`uv sync --locked` excludes it. For development lint including Spark, install both groups:
+`uv sync --locked --group bench --group streaming`.
+
+The bounded demo starts its consumer before sending messages. Run these sequentially, with
+no other producer/consumer using the demo topics and no other heavy profile running:
+
+```bash
+make test-kafka
+make kafka-demo COUNT=500 RATE=500 TRIAL=0 MALFORMED=5
+make kafka-demo COUNT=100000 RATE=500 TRIAL=1 MALFORMED=0
+make kafka-demo COUNT=100000 RATE=2000 TRIAL=2 MALFORMED=0
+make kafka-demo COUNT=100000 RATE=0 TRIAL=3 MALFORMED=0
+make kafka-stats
+```
+
+Each command reports its initial pass and a separate replay. `RATE=0` is unthrottled.
+For separate processes, `make kafka-produce COUNT=500 RATE=500` publishes a repeatable slice;
+running it again republishes the same identities. `make kafka-consume COUNT=500
+KAFKA_GROUP=deliverypulse-local-v1` consumes a bounded count and resumes that group's stored
+offsets. A new group begins at the earliest retained input, which may include older demo
+messages; use `make kafka-demo` for an isolated current-offset measurement window.
+The correctness slice is 250 orders and 250 pings. Each larger trial selects a distinct
+slice of 10,000 order versions and 90,000 pings. Selection skips invalid and repeated
+identities deterministically; raw source files remain unchanged. Repeating a completed trial
+will correctly report duplicates on its initial pass too. It does not delete landing data.
+
+The single consumer assigns partition zero of the two input topics directly; it is not a
+multi-consumer load-balanced service. Demo groups have unique IDs and start at snapshotted
+end offsets. The consumer API also supports restarting a persistent group from committed
+offsets. Kafka retention can expire unconsumed records; this demo is not a durable archive.
+Timeouts, failed database writes, failed DLQ delivery or failed offset commits fail the run.
+After a failure, rerun the same source slice; committed inserts deduplicate. For a persistent
+group restart, keep its group ID and omit explicit start offsets.
+
+Latency is host wall-clock send time to return from the committed database batch, including
+queueing and batching (500 rows or 250 ms). It covers inserts and duplicate checks, excludes
+dead letters, and is not a cross-host clock-synchronization guarantee. Throughput includes
+consumer initialization, processing, and offset commits, but excludes source selection.
+The JSON's `host_process_peak_rss_mib`, when present, is the operating system's high-water
+RSS for the combined producer/consumer demo process, including source selection. It is not
+consumer-only memory. Earlier runs without this field have no high-water RSS measurement;
+an instantaneous RSS sample must not be described as a peak.
+The demo retains its selected payloads and at most 100,005 latency values; it is bounded,
+not an indefinitely running service. Kafka queues are limited to 16 MiB per client.
+DLQ delivery is at-least-once: a crash before offset acknowledgment can repeat a DLQ entry.
+Its key includes cluster/topic/partition/offset for downstream deduplication.
+
+Live tests use the separate test database and leave a few uniquely named immutable landing
+rows per run; they do not grant DELETE privileges or clear production data.
+
+### Kafka volumes and deliberate reset
+
+The image declares three writable mount points. Named volumes keep these explicit and
+reusable instead of leaving anonymous volumes behind:
+
+| Volume | Mount | Contents and purpose |
+|---|---|---|
+| `deliverypulse_kafka_data` | `/var/lib/kafka/data` | Partition logs (including DLQ records and consumer offsets), KRaft metadata and the stored cluster identity; preserves broker data across restarts. |
+| `deliverypulse_kafka_config` | `/mnt/shared/config` | Shared/generated configuration space provided by the upstream image; keeps this writable configuration mount under an explicit volume name. |
+| `deliverypulse_kafka_secrets` | `/etc/kafka/secrets` | Mount reserved by the image for optional TLS/SASL assets. This PLAINTEXT demo does not populate it with credentials; naming it avoids an anonymous volume. |
+
+**Data-loss warning:** the following user-run commands permanently delete all Kafka topics,
+messages, dead letters, consumer offsets and cluster metadata, plus any files in the
+configuration and secrets volumes. Use them only for an intentional Kafka reset. They leave
+PostgreSQL and its landing rows intact; replayed business identities still deduplicate there.
+
+Run these yourself from the project root, after stopping any producer or consumer:
+
+```bash
+make kafka-down
+docker compose -f docker-compose.yml -f docker-compose.kafka.yml --profile streaming rm -f kafka kafka-topics
+docker volume rm deliverypulse_kafka_data deliverypulse_kafka_config deliverypulse_kafka_secrets
+```
+
+The cluster ID may change **only after deleting the data volume**. To create a new cluster,
+generate an ID with the command above, update `KAFKA_CLUSTER_ID` in your local `.env`, then run
+`make kafka-up`. Ordinary stops need only `make kafka-down`; keep the ID and volumes intact.
+
 ## Scale benchmark (pandas vs PySpark)
 
 Needs the `bench` dependency group (`uv sync --locked --group bench`) and a **Java 21** runtime
@@ -649,6 +776,7 @@ removes it if so, and reports clearly if it did not exist. Aborting (any answer 
 |---|---|---|---|
 | `core` | PostgreSQL | ~50-150 MiB idle; up to a few hundred MiB under analytical queries with default settings (`shared_buffers` 128 MB) | 1 GiB (`mem_limit`) |
 | `s3` | SeaweedFS (master, volume, filer and S3 gateway in one process) | Measured 2026-10-14: 88-152 MiB after start; up to 403.3 MiB after exporting and checking the default dataset twice | 768 MiB (`mem_limit`; raised from 512 MiB ahead of larger datasets) |
+| `streaming` | Kafka broker | Measured 2026-10-15: 362.5 MiB idle; largest sample 507.3 MiB | 1 GiB (`mem_limit`) |
 | `core` + `airflow` | PostgreSQL, airflow-db, api-server, scheduler, dag-processor | Measured 2026-10-14: about 1.0-1.1 GiB idle; peak 2.12-2.26 GiB during a full DAG run | sum of limits 5.25 GiB (per-container limits in "Airflow orchestration") |
 
 **Airflow, measured 2026-10-14** (`make airflow-stats`, sampled every few seconds while the last
@@ -668,7 +796,7 @@ total sample. At the highest total sample the scheduler was at 1.544 GiB, 77 % o
 limit. An earlier rerun of the same window the same day peaked at 2,310.0 MiB (2.26 GiB) in
 total, scheduler 1,625.1 MiB.
 
-These are estimates. Measure on your machine with
+Rows without measured values are estimates. Measure on your machine with
 `docker stats --no-stream deliverypulse-postgres-1`. Measured after a full load of the default
 dataset (2026-10-11): 178.8 MiB of the 1 GiB limit. Docker Desktop's VM itself uses additional
 memory on the host.

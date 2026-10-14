@@ -5,6 +5,7 @@ so a unit test that needs PostgreSQL fails with a clear message instead of passi
 failing depending on whether the database happens to be running.
 """
 
+import importlib.util
 from collections.abc import Iterator
 from typing import NoReturn
 
@@ -15,6 +16,7 @@ from src.ingestion.generator_config import GeneratorConfig
 from tests.unit.generated import SMALL_ORDERS, SMALL_SEED, GeneratedDataset, generate_into
 
 NO_DATABASE = "unit tests must not connect to a database"
+NO_KAFKA = "unit tests must not create a Kafka client"
 
 
 def _refuse_connection(*_: object, **__: object) -> NoReturn:
@@ -27,6 +29,20 @@ def no_database(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(psycopg, "connect", _refuse_connection)
     monkeypatch.setattr(psycopg.Connection, "connect", _refuse_connection)
     yield
+
+
+@pytest.fixture(autouse=True)
+def no_kafka(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse live Kafka clients even when the optional group is installed locally."""
+    if importlib.util.find_spec("confluent_kafka") is None:
+        return
+    import confluent_kafka
+
+    def refuse(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError(NO_KAFKA)
+
+    monkeypatch.setattr(confluent_kafka, "Producer", refuse)
+    monkeypatch.setattr(confluent_kafka, "Consumer", refuse)
 
 
 @pytest.fixture(scope="session")

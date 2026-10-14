@@ -1,0 +1,237 @@
+{
+  "date": "2026-10-15",
+  "hardware": {
+    "os": "macOS 26.6.2",
+    "architecture": "arm64",
+    "physical_cores": 10,
+    "logical_cpus": 10,
+    "ram_gib": 16
+  },
+  "methodology": "One session; deterministic disjoint valid unique source slices; concurrent producer/consumer; separate replay. Throughput excludes source selection; latency send header to committed DB batch return. No consumer-only RSS measurement.",
+  "runs": [
+    {
+      "after_rows": 500,
+      "before_rows": 0,
+      "initial": {
+        "consumed": 505,
+        "dead_letter": 5,
+        "duplicate": 0,
+        "inserted": 500,
+        "latency_ms_max": 293.72,
+        "latency_ms_p50": 149.808,
+        "latency_ms_p95": 269.941,
+        "producer_acknowledged": 505,
+        "producer_seconds": 1.0161582920700312,
+        "records_per_second": 484.7179079021444,
+        "requested_rate": 500,
+        "seconds": 1.0418430839199573
+      },
+      "replay": {
+        "consumed": 500,
+        "dead_letter": 0,
+        "duplicate": 500,
+        "inserted": 0,
+        "latency_ms_max": 482.595,
+        "latency_ms_p50": 244.11,
+        "latency_ms_p95": 434.888,
+        "producer_acknowledged": 500,
+        "producer_seconds": 0.9996855421923101,
+        "records_per_second": 443.7604778187188,
+        "requested_rate": 500,
+        "seconds": 1.1267339589539915
+      },
+      "source_orders": 250,
+      "source_pings": 250,
+      "trial": 0
+    },
+    {
+      "after_rows": 100500,
+      "before_rows": 500,
+      "initial": {
+        "consumed": 100000,
+        "dead_letter": 0,
+        "duplicate": 0,
+        "inserted": 100000,
+        "latency_ms_max": 755.431,
+        "latency_ms_p50": 164.127,
+        "latency_ms_p95": 287.816,
+        "producer_acknowledged": 100000,
+        "producer_seconds": 200.00280670891516,
+        "records_per_second": 499.9485332153547,
+        "requested_rate": 500,
+        "seconds": 200.0205888331402
+      },
+      "replay": {
+        "consumed": 100000,
+        "dead_letter": 0,
+        "duplicate": 100000,
+        "inserted": 0,
+        "latency_ms_max": 1081.231,
+        "latency_ms_p50": 306.226,
+        "latency_ms_p95": 529.346,
+        "producer_acknowledged": 100000,
+        "producer_seconds": 200.00610687513836,
+        "records_per_second": 499.78156047290594,
+        "requested_rate": 500,
+        "seconds": 200.08741400018334
+      },
+      "source_orders": 10000,
+      "source_pings": 90000,
+      "trial": 1
+    },
+    {
+      "after_rows": 200500,
+      "before_rows": 100500,
+      "host_process_peak_rss_mib": 121.046875,
+      "initial": {
+        "consumed": 100000,
+        "dead_letter": 0,
+        "duplicate": 0,
+        "inserted": 100000,
+        "latency_ms_max": 743.923,
+        "latency_ms_p50": 176.712,
+        "latency_ms_p95": 291.528,
+        "producer_acknowledged": 100000,
+        "producer_seconds": 50.0049097079318,
+        "records_per_second": 1998.838220260212,
+        "requested_rate": 2000,
+        "seconds": 50.02906137495302
+      },
+      "replay": {
+        "consumed": 100000,
+        "dead_letter": 0,
+        "duplicate": 100000,
+        "inserted": 0,
+        "latency_ms_max": 3920.232,
+        "latency_ms_p50": 1876.476,
+        "latency_ms_p95": 3696.625,
+        "producer_acknowledged": 100000,
+        "producer_seconds": 50.00087900017388,
+        "records_per_second": 1863.559949078103,
+        "requested_rate": 2000,
+        "seconds": 53.660736833000556
+      },
+      "source_orders": 10000,
+      "source_pings": 90000,
+      "trial": 2
+    },
+    {
+      "after_rows": 300500,
+      "before_rows": 200500,
+      "host_process_peak_rss_mib": 170.53125,
+      "initial": {
+        "consumed": 100000,
+        "dead_letter": 0,
+        "duplicate": 0,
+        "inserted": 100000,
+        "latency_ms_max": 6758.851,
+        "latency_ms_p50": 4186.62,
+        "latency_ms_p95": 6374.134,
+        "producer_acknowledged": 100000,
+        "producer_seconds": 1.8645021670963615,
+        "records_per_second": 11580.934169049693,
+        "requested_rate": 0,
+        "seconds": 8.634882000042126
+      },
+      "replay": {
+        "consumed": 100000,
+        "dead_letter": 0,
+        "duplicate": 100000,
+        "inserted": 0,
+        "latency_ms_max": 51031.073,
+        "latency_ms_p50": 25483.584,
+        "latency_ms_p95": 48573.778,
+        "producer_acknowledged": 100000,
+        "producer_seconds": 1.0559062079992145,
+        "records_per_second": 1922.4413328447406,
+        "requested_rate": 0,
+        "seconds": 52.017192041967064
+      },
+      "source_orders": 10000,
+      "source_pings": 90000,
+      "trial": 3
+    }
+  ],
+  "resource_samples": [
+    {
+      "phase": "idle before correctness",
+      "broker_mib": 362.5,
+      "postgres_mib": 177.9,
+      "data_kib": 184
+    },
+    {
+      "phase": "500/s",
+      "broker_mib": 435.9,
+      "postgres_mib": 181.6,
+      "data_kib": 8132
+    },
+    {
+      "phase": "500/s",
+      "broker_mib": 432.5,
+      "postgres_mib": 181.7,
+      "data_kib": 17576
+    },
+    {
+      "phase": "500/s",
+      "broker_mib": 434.6,
+      "postgres_mib": 181.5,
+      "data_kib": 29236
+    },
+    {
+      "phase": "500/s",
+      "broker_mib": 438.2,
+      "postgres_mib": 181.2,
+      "data_kib": 40728
+    },
+    {
+      "phase": "500/s",
+      "broker_mib": 444.1,
+      "postgres_mib": 181.2,
+      "data_kib": 57704
+    },
+    {
+      "phase": "between trials",
+      "broker_mib": 446.2,
+      "postgres_mib": 178.6,
+      "data_kib": 73720
+    },
+    {
+      "phase": "2000/s",
+      "broker_mib": 452.8,
+      "postgres_mib": 181.9,
+      "data_kib": 96320
+    },
+    {
+      "phase": "after 2000/s",
+      "broker_mib": 491,
+      "postgres_mib": 179.7,
+      "data_kib": 144168
+    },
+    {
+      "phase": "unthrottled",
+      "broker_mib": 507.3,
+      "postgres_mib": 185.3,
+      "data_kib": 213480
+    },
+    {
+      "phase": "after all trials",
+      "broker_mib": 474.6,
+      "postgres_mib": 179.5,
+      "data_kib": 213464
+    }
+  ],
+  "rss_sample_500_rate": {
+    "matching_process_rss_mib": [
+      16.52,
+      91.02
+    ],
+    "kind": "instantaneous snapshots of processes with src.streaming.demo in argv; roles not captured, not peaks"
+  },
+  "dataset": "data/raw/seed-42_orders-50000_cfg-449e309b",
+  "commands": [
+    "make kafka-demo COUNT=500 RATE=500 TRIAL=0 MALFORMED=5",
+    "make kafka-demo COUNT=100000 RATE=500 TRIAL=1 MALFORMED=0",
+    "make kafka-demo COUNT=100000 RATE=2000 TRIAL=2 MALFORMED=0",
+    "make kafka-demo COUNT=100000 RATE=0 TRIAL=3 MALFORMED=0"
+  ]
+}

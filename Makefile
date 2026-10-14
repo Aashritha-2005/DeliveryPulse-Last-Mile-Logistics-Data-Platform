@@ -46,6 +46,7 @@ DAG_ID := delivery_pipeline
 # Object store: its services live in docker-compose.s3.yml, layered on the core file, so the
 # core targets need no S3_ variable.
 COMPOSE_S3 := docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile s3
+COMPOSE_KAFKA := docker compose -f docker-compose.yml -f docker-compose.kafka.yml --profile streaming
 # Benchmark (bench dependency group; PySpark needs a Java 21 runtime). Every benchmark command
 # resolves JAVA_HOME with java_home -v 21 and fails with a clear message when it is missing.
 JAVA_21 = $$(/usr/libexec/java_home -v 21 2>/dev/null || true)
@@ -62,6 +63,10 @@ ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STO
 .PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset s3-up s3-down s3-logs s3-stats lake-export lake-check test-s3 test-spark bench-data benchmark bench-clean db-sizes
 
 help:
+	@echo "  make kafka-env-check   validate local streaming configuration (values never printed)"
+	@echo "  make kafka-up          start Kafka, wait healthy, create the three explicit topics"
+	@echo "  make kafka-down        stop only Kafka services; KEEPS volumes and PostgreSQL"
+	@echo "  make kafka-logs        last 100 broker log lines"
 	@echo "DeliveryPulse targets:"
 	@echo "  make lint              ruff lint, ruff format check, mypy (strict)"
 	@echo "  make format            apply ruff fixes and ruff formatting"
@@ -123,6 +128,43 @@ lint:
 	$(UV_RUN) ruff check .
 	$(UV_RUN) ruff format --check .
 	$(UV_RUN) mypy src tests $(PY_SCRIPTS)
+
+.PHONY: kafka-env-check kafka-up kafka-down kafka-logs
+kafka-env-check:
+	$(UV_RUN) python -m src.streaming.config
+
+kafka-up: kafka-env-check
+	$(COMPOSE_KAFKA) up -d --wait --wait-timeout 180 kafka
+	$(COMPOSE_KAFKA) run --rm --no-deps kafka-topics
+
+kafka-down:
+	$(COMPOSE_KAFKA) stop kafka-topics kafka
+
+kafka-logs:
+	$(COMPOSE_KAFKA) logs --tail 100 kafka
+
+COUNT ?= 500
+RATE ?= 500
+TRIAL ?= 0
+MALFORMED ?= 5
+KAFKA_GROUP ?= deliverypulse-local-v1
+.PHONY: kafka-produce kafka-consume
+kafka-produce: kafka-env-check
+	$(UV_RUN) --locked --group streaming python -m src.streaming.cli produce --count $(COUNT) --rate $(RATE) --raw-dir $(RAW_DIR)
+
+kafka-consume: kafka-env-check
+	$(UV_RUN) --locked --group streaming python -m src.streaming.cli consume --count $(COUNT) --group $(KAFKA_GROUP)
+
+.PHONY: kafka-demo test-kafka kafka-stats
+kafka-demo: kafka-env-check
+	$(UV_RUN) --locked --group streaming python -m src.streaming.demo --count $(COUNT) --rate $(RATE) --trial $(TRIAL) --malformed $(MALFORMED) --raw-dir $(RAW_DIR)
+
+test-kafka:
+	$(UV_RUN) --locked --group streaming pytest -m kafka
+
+kafka-stats:
+	$(COMPOSE_KAFKA) exec -T kafka sh -c 'du -sk /var/lib/kafka/data'
+	docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}' deliverypulse-kafka-1 deliverypulse-postgres-1
 
 format:
 	$(UV_RUN) ruff check --fix .

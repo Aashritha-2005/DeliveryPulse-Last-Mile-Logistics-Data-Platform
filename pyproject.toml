@@ -33,6 +33,9 @@ bench = [
     "psutil==7.2.2",
     "pyspark==4.2.0",
 ]
+streaming = [
+    "confluent-kafka==2.15.1",
+]
 
 [tool.uv]
 # Not an installable package: code is run from the project root via `uv run`.
@@ -88,4 +91,5 @@ markers = [
     "integration: tests that need running services such as PostgreSQL",
     "s3: tests that need PostgreSQL and the local object store (make up, make s3-up)",
     "spark: tests that need a Java 21 runtime and the bench dependency group (make test-spark)",
+    "kafka: tests against Kafka and PostgreSQL (make test-kafka)",
 ]

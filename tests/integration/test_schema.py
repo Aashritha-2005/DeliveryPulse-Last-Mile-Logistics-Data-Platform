@@ -107,3 +107,28 @@ def test_session_timezone_is_utc(readonly_conn: Connection) -> None:
     row = readonly_conn.execute("SELECT current_setting('TimeZone')").fetchone()
     assert row is not None
     assert row[0] == "UTC"
+
+
+def test_stream_landing_replay_preserves_first_provenance(etl_conn: Connection) -> None:
+    """Republishing at a new offset must not overwrite or duplicate a landing record."""
+    statement = """
+        INSERT INTO raw.stream_events (
+            record_kind, record_key, record_version, content_hash, payload,
+            source_dataset, source_file, source_row_number, kafka_cluster_id,
+            kafka_topic, kafka_partition, kafka_offset, produced_at
+        ) VALUES (
+            'driver_ping', 'schema-replay-test', '', 'test-hash', %s,
+            'schema-test', 'events.csv', 1, 'test-cluster', 'test-topic', 0, %s,
+            TIMESTAMPTZ '2026-10-15 00:00:00+00'
+        ) ON CONFLICT (record_kind, record_key, record_version) DO NOTHING
+        RETURNING kafka_offset
+    """
+    payload = b'{"event_id":"schema-replay-test"}'
+    with etl_conn.transaction(force_rollback=True):
+        assert etl_conn.execute(statement, (payload, 10)).fetchone() == (10,)
+        assert etl_conn.execute(statement, (payload, 20)).fetchone() is None
+        assert etl_conn.execute(
+            "SELECT kafka_offset FROM raw.stream_events "
+            "WHERE record_kind = 'driver_ping' AND record_key = 'schema-replay-test' "
+            "AND record_version = ''"
+        ).fetchall() == [(10,)]

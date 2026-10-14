@@ -21,6 +21,23 @@ hours use **Asia/Kolkata** (UTC+05:30, no daylight saving).
 `deliverypulse_readonly` (dashboards, `make analytics`, `make explain`) can read `analytics`
 only.
 
+### Streaming landing table
+
+`raw.stream_events` stores the original Kafka value bytes after stateless validation. Its
+primary key is `(record_kind, record_key, record_version)`: orders use their ID and canonical
+UTC `source_updated_at`; immutable driver pings use their event ID and an empty version.
+Identity does not include dataset, topic, offset or send time, so republishing the same source
+record cannot create another row. Older order versions remain separate immutable records;
+this table does not select a latest version or update analytics.
+
+`content_hash` is the SHA-256 of canonical source fields. The consumer must compare it on
+conflict: identical content is a duplicate, different content goes to the dead-letter topic.
+The first insert retains `source_dataset`, `source_file`, `source_row_number`,
+`kafka_cluster_id`, `kafka_topic`, `kafka_partition`, `kafka_offset`, `produced_at` and
+`ingested_at`. A replay never replaces that provenance. No CHECK or foreign-key constraints
+are added here; parent waiting and historical GPS checks remain outside this landing path.
+The ETL role has SELECT and INSERT only; the read-only dashboard role has no access.
+
 ## 2. Star schema
 
 ```mermaid

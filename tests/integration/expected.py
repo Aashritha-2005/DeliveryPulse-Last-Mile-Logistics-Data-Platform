@@ -6,7 +6,9 @@ READONLY_ROLE = "deliverypulse_readonly"
 APPLICATION_ROLES = (ETL_ROLE, READONLY_ROLE)
 
 EXPECTED_TABLES: dict[str, frozenset[str]] = {
-    "raw": frozenset({"drivers_raw", "orders_raw", "events_raw", "shift_events_raw"}),
+    "raw": frozenset(
+        {"drivers_raw", "orders_raw", "events_raw", "shift_events_raw", "stream_events"}
+    ),
     "staging": frozenset({"rejected_records", "pending_events", "record_state", "gps_reference"}),
     "analytics": frozenset(
         {

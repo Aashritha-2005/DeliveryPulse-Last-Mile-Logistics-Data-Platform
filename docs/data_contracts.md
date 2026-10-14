@@ -1,5 +1,26 @@
 # Data contracts
 
+## Streaming landing contract
+
+Kafka orders and driver pings use a JSON envelope with `kind`, `fields`, `dataset`, `file`
+and positive source `row`. `fields` preserves the source values; unknown scalar fields are
+retained. Required source columns must be present. Order validation and basic event/GPS
+coordinate validation reuse the batch rule functions. The pings topic accepts `gps_ping`
+only. Non-JSON messages, invalid envelopes, wrong-topic messages, missing/invalid send-time
+headers and failed stateless rules go to the DLQ with a reason and base64 original bytes.
+
+Valid records land only in `raw.stream_events`. Order identity is order ID plus canonical
+UTC source update timestamp; ping identity is event ID. Replays with identical canonical
+source content are duplicates; conflicting content for an existing identity goes to the DLQ.
+Transport metadata and source location do not change identity or content hash. No analytics
+tables or S3 objects are updated. Different order versions remain immutable landing records.
+
+The landing path does not apply parent waiting, stale-version selection or historical GPS
+speed checks. Those remain batch-pipeline rules; landing acceptance is not analytics acceptance.
+Each batch satisfies `consumed = inserted + duplicate + dead_letter`. Database commit comes
+before DLQ acknowledgment, which comes before synchronous offset commit. Failure between
+these steps can cause redelivery, handled by the landing primary key and content comparison.
+
 The contract between the synthetic source (`src/ingestion/generate_data.py`) and the pipeline
 (transform, load and quality checks). The constants live in `src/contract.py` (re-exported by
 `src/ingestion/generator_config.py` for the generator). A unit test checks

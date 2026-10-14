@@ -81,6 +81,7 @@ def test_readonly_can_select_analytics_table(readonly_conn: Connection, table: s
         pytest.param("ALTER TABLE analytics.drivers ADD COLUMN privilege_test integer", id="alter"),
         pytest.param("DROP TABLE analytics.drivers", id="drop"),
         pytest.param("SELECT 1 FROM raw.orders_raw LIMIT 1", id="select-raw"),
+        pytest.param("SELECT 1 FROM raw.stream_events LIMIT 1", id="select-stream"),
         pytest.param("SELECT 1 FROM staging.rejected_records LIMIT 1", id="select-staging"),
         pytest.param("SELECT 1 FROM audit.pipeline_runs LIMIT 1", id="select-audit"),
     ],
@@ -183,6 +184,9 @@ def test_etl_can_insert_into_staging(etl_conn: Connection) -> None:
     [
         pytest.param("UPDATE raw.orders_raw SET status = 'privilege-test'", id="update-raw"),
         pytest.param("DELETE FROM raw.orders_raw", id="delete-raw"),
+        pytest.param("UPDATE raw.stream_events SET record_key = 'changed'", id="update-stream"),
+        pytest.param("DELETE FROM raw.stream_events", id="delete-stream"),
+        pytest.param("TRUNCATE raw.stream_events", id="truncate-stream"),
         pytest.param("TRUNCATE analytics.orders", id="truncate-analytics"),
         pytest.param("CREATE TABLE analytics.privilege_test (id integer)", id="create-analytics"),
         pytest.param("CREATE TABLE staging.privilege_test (id integer)", id="create-staging"),

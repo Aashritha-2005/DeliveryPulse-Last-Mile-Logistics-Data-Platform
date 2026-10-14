@@ -180,14 +180,19 @@ def test_reloading_is_a_logged_no_op(
 def test_full_load_inside_a_rolled_back_transaction_leaves_nothing(
     etl_test_conn: Connection, fixture_dataset: Path
 ) -> None:
-    assert set(counts(etl_test_conn).values()) == {0}, "the test database is not empty"
+    before = counts(etl_test_conn)
+    # Kafka recovery tests commit immutable landing rows in this same test database.
+    # Batch tables must still start empty, and the load must preserve the landing rows.
+    assert {n for name, n in before.items() if name != "raw.stream_events"} == {0}
+    stream_before = digest(etl_test_conn, ("raw", "stream_events"))
     with etl_test_conn.transaction(force_rollback=True):
         load_dataset(etl_test_conn, fixture_dataset, CONFIG)
         inside = counts(etl_test_conn)
         assert inside["analytics.orders"] > 0
         assert inside["audit.pipeline_runs"] == 4 * len(batch_folders(fixture_dataset))
     after = counts(etl_test_conn)
-    assert after == dict.fromkeys(after, 0)
+    assert after == before
+    assert digest(etl_test_conn, ("raw", "stream_events")) == stream_before
 
 
 # ---------------------------------------------------------------------- failures ---
@@ -261,10 +266,14 @@ def test_abandoned_attempt_is_marked_failed_and_retried(
 
 
 def test_batches_load_strictly_in_sequence(test_db: Connection, fixture_dataset: Path) -> None:
+    before = counts(test_db)
+    assert {n for name, n in before.items() if name != "raw.stream_events"} == {0}
+    stream_before = digest(test_db, ("raw", "stream_events"))
     second = batch_folders(fixture_dataset)[1]
     with pytest.raises(BatchSequenceError):
         load_batch_folder(test_db, fixture_dataset.name, second, CONFIG)
-    assert set(counts(test_db).values()) == {0}
+    assert counts(test_db) == before
+    assert digest(test_db, ("raw", "stream_events")) == stream_before
 
 
 # ------------------------------------------------------------- database guards ---

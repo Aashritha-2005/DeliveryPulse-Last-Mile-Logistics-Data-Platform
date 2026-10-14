@@ -28,6 +28,7 @@ REVOKE ALL ON SCHEMA public FROM PUBLIC;
 -- ------------------------------------------------------------ deliverypulse_etl ---
 GRANT USAGE ON SCHEMA raw, staging, analytics, audit TO deliverypulse_etl;
 
+-- Includes raw.stream_events: streaming uses the same append-only ETL permissions.
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA raw TO deliverypulse_etl;
 GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA staging TO deliverypulse_etl;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA analytics TO deliverypulse_etl;

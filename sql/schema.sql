@@ -91,6 +91,36 @@ CREATE TABLE raw.shift_events_raw (
     UNIQUE (batch_id, source_file, source_row_number)
 );
 
+-- Streaming landing records are separate from the batch source tables. The consumer
+-- validates stateless rules before insert; malformed records go to the Kafka DLQ.
+-- Identity is independent of Kafka offsets and send time, so republishing is idempotent.
+CREATE TABLE raw.stream_events (
+    record_kind       text        NOT NULL,
+    record_key        text        NOT NULL,
+    record_version    text        NOT NULL,
+    content_hash      text        NOT NULL,
+    payload           bytea       NOT NULL,
+    source_dataset    text        NOT NULL,
+    source_file       text        NOT NULL,
+    source_row_number bigint      NOT NULL,
+    kafka_cluster_id  text        NOT NULL,
+    kafka_topic       text        NOT NULL,
+    kafka_partition   integer     NOT NULL,
+    kafka_offset      bigint      NOT NULL,
+    produced_at       timestamptz NOT NULL,
+    ingested_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (record_kind, record_key, record_version)
+);
+
+COMMENT ON TABLE raw.stream_events IS
+    'Append-only streaming landing table; no analytics updates. Provenance is from the first insert.';
+COMMENT ON COLUMN raw.stream_events.record_version IS
+    'Canonical UTC source_updated_at for orders; empty string for immutable driver pings.';
+COMMENT ON COLUMN raw.stream_events.content_hash IS
+    'SHA-256 of canonical source fields, excluding transport metadata; detect conflicting replays.';
+COMMENT ON COLUMN raw.stream_events.payload IS
+    'Original Kafka value bytes, preserved without rewriting. Malformed values stay in the DLQ.';
+
 -- ================================================================= staging ===
 -- Rejected and pending records, plus the cross-batch pipeline state used by the loader.
 
