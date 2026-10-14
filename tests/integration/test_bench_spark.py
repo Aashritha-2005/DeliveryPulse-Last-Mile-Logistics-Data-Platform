@@ -6,17 +6,22 @@ input and compare every count and every aggregate row. Spark's scratch space and
 go into the test's own folder and are removed with it.
 """
 
+from __future__ import annotations
+
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from pyspark.sql import SparkSession
 
-from src.bench import pandas_engine, spark_engine
+from src.bench import pandas_engine
 from src.bench.reads import WEEK, pandas_week_counts, write_read_copies
 from src.bench.shards import convert_dataset
 from src.bench.spec import WorkloadResult
+
+if TYPE_CHECKING:
+    from pyspark.sql import SparkSession
 
 pytestmark = pytest.mark.spark
 
@@ -32,6 +37,8 @@ def shard(fixture_dataset: Path, tmp_path_factory: pytest.TempPathFactory) -> Pa
 @pytest.fixture(scope="module")
 def spark(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SparkSession]:
     """A local SparkSession whose scratch space is inside the test's temporary folder."""
+    from src.bench import spark_engine
+
     root = tmp_path_factory.mktemp("spark_work")
     session = spark_engine.session(root / "spark-local", root / "tmp", app="deliverypulse-tests")
     yield session
@@ -47,6 +54,8 @@ def test_java_21_is_used() -> None:
 
 
 def test_both_engines_give_identical_results(spark: SparkSession, shard: Path) -> None:
+    from src.bench import spark_engine
+
     from_pandas = pandas_engine.run_workload([shard])
     from_spark = spark_engine.run_workload(spark, [shard])
 
@@ -61,6 +70,8 @@ def test_both_engines_agree_on_several_shards(
     spark: SparkSession, shard: Path, tmp_path: Path
 ) -> None:
     """Two copies of the shard: the engines must agree on the doubled input too."""
+    from src.bench import spark_engine
+
     second = tmp_path / "shard-0002"
     second.mkdir()
     for name in ("orders.parquet", "delivery_events.parquet"):
@@ -80,6 +91,8 @@ def test_both_engines_agree_on_several_shards(
 def test_both_engines_agree_on_the_read_benchmark_queries(
     spark: SparkSession, shard: Path, tmp_path: Path
 ) -> None:
+    from src.bench import spark_engine
+
     single, partitioned = write_read_copies([shard], tmp_path / "reads")
 
     pandas_single = pandas_week_counts(single)
@@ -94,5 +107,7 @@ def test_both_engines_agree_on_the_read_benchmark_queries(
 
 def test_workload_result_json_is_stable_across_engines(spark: SparkSession, shard: Path) -> None:
     """The JSON the harness compares must round-trip for both engines."""
+    from src.bench import spark_engine
+
     for result in (pandas_engine.run_workload([shard]), spark_engine.run_workload(spark, [shard])):
         assert WorkloadResult.from_json(result.to_json()) == result
