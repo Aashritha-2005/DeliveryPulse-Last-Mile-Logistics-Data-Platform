@@ -20,7 +20,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def isolated(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> pytest.Pytester:
     """A pytester whose subprocess can import the project's ``tests`` and ``src`` packages."""
     monkeypatch.setenv("PYTHONPATH", str(PROJECT_ROOT))
-    pytester.makeini("[pytest]\nmarkers =\n    unit: unit\n    integration: integration\n")
+    pytester.makeini(
+        "[pytest]\nmarkers =\n    unit: unit\n    integration: integration\n    s3: s3\n"
+    )
     return pytester
 
 
@@ -41,13 +43,19 @@ def test_unmarked():
 @pytest.mark.integration
 def test_both():
     pass
+
+@pytest.mark.integration
+@pytest.mark.s3
+def test_database_and_store():
+    pass
 """
     )
     result = isolated.runpytest_subprocess()
     output = result.stdout.str() + result.stderr.str()
     assert result.ret == pytest.ExitCode.USAGE_ERROR
-    assert "test_unmarked: neither marker" in output
-    assert "test_both: both markers" in output
+    assert "test_unmarked: no suite marker" in output
+    assert "test_both: markers unit, integration" in output
+    assert "test_database_and_store: markers integration, s3" in output
 
 
 def test_marker_guard_accepts_correctly_marked_tests(isolated: pytest.Pytester) -> None:
@@ -63,9 +71,13 @@ def test_unit():
 @pytest.mark.integration
 def test_integration():
     pass
+
+@pytest.mark.s3
+def test_object_store():
+    pass
 """
     )
-    isolated.runpytest_subprocess().assert_outcomes(passed=2)
+    isolated.runpytest_subprocess().assert_outcomes(passed=3)
 
 
 def test_unit_guard_refuses_database_connections(isolated: pytest.Pytester) -> None:

@@ -1,0 +1,92 @@
+# Object store (the "s3" Compose profile): SeaweedFS, an S3-compatible server, and a one-shot
+# service that writes its S3 identity file from .env into a named volume. Kept in its own file,
+# layered on the core file by the `make s3-*` targets, so the core stack never needs any S3_
+# variable:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile s3 <command>
+#
+# `${VAR:?message}` makes Compose refuse to start when a required variable is missing;
+# scripts/s3_env_check.sh additionally rejects placeholders and unsafe key characters.
+# Memory: docs/operations.md, "Approximate RAM use per profile".
+
+# SeaweedFS 4.48 (2026-09-28), pinned to its multi-architecture index digest (linux/arm64 and
+# linux/amd64 among its platforms; verified with `docker buildx imagetools inspect`).
+x-seaweedfs-image: &seaweedfs-image chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+
+services:
+  s3-config:
+    # One-shot: writes /config/s3.json (two identities) into the s3_config volume, readable only
+    # by the SeaweedFS user (uid 1000). The keys never enter an image or a project file.
+    image: *seaweedfs-image
+    profiles: ["s3"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        printf '{"identities":[{"name":"admin","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Write"]},{"name":"deliverypulse-pipeline","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Read:%s","List:%s","Write:%s"]}]}\n' \
+          "$$S3_ADMIN_ACCESS_KEY" "$$S3_ADMIN_SECRET_KEY" \
+          "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY" \
+          "$$S3_BUCKET" "$$S3_BUCKET" "$$S3_BUCKET" > /config/s3.json.tmp
+        chown 1000:1000 /config/s3.json.tmp
+        mv /config/s3.json.tmp /config/s3.json
+        echo "s3 identity file written (values not shown)"
+    environment:
+      S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?set S3_ADMIN_ACCESS_KEY in .env}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?set S3_ADMIN_SECRET_KEY in .env}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+    volumes:
+      - s3_config:/config
+    network_mode: none
+    restart: "no"
+    mem_limit: 64m
+    cap_drop: [ALL]
+    # CHOWN hands the file to the SeaweedFS user; DAC_OVERRIDE lets root write into the volume,
+    # which Docker may have initialised from the image's /etc/seaweedfs (owned by uid 1000).
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt:
+      - no-new-privileges:true
+
+  s3:
+    # Master, volume server, filer and S3 gateway in one process. Only the S3 API is published,
+    # on 127.0.0.1. The entrypoint starts as root to fix /data ownership, then runs as uid 1000.
+    image: *seaweedfs-image
+    profiles: ["s3"]
+    command:
+      - server
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -master.volumeSizeLimitMB=64
+    ports:
+      - "127.0.0.1:${S3_API_PORT:?set S3_API_PORT in .env}:8333"
+    volumes:
+      - s3_data:/data
+      - s3_config:/etc/seaweedfs:ro
+    healthcheck:
+      # The master answers its status page; the S3 gateway answers any request (403 without
+      # credentials), which proves it is listening.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:9333/cluster/status && curl -sS -o /dev/null http://127.0.0.1:8333/"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    # 768 MiB: at 512 MiB it reached 403 MiB (79 %) after two exports of the default dataset.
+    mem_limit: 768m
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    depends_on:
+      s3-config:
+        condition: service_completed_successfully
+
+volumes:
+  # Explicit names; no make target deletes them.
+  s3_data:
+    name: deliverypulse_s3_data
+  s3_config:
+    name: deliverypulse_s3_config

@@ -37,7 +37,8 @@ Then replace every `CHANGE_ME` in `.env` with real local values. The core profil
 `POSTGRES_SUPERUSER_PASSWORD`, `DELIVERYPULSE_ETL_PASSWORD` and
 `DELIVERYPULSE_READONLY_PASSWORD` **before the first `make up`**. The Airflow profile also needs
 `AIRFLOW_DB_PASSWORD`, `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET` and a numeric `AIRFLOW_UID`
-before `make airflow-build`, `make airflow-up` or `make airflow-dag-check`.
+before `make airflow-build`, `make airflow-up` or `make airflow-dag-check`. The object store
+(`s3` profile) needs the four `S3_` keys before `make s3-up` (see "Object storage lake").
 
 ## Everyday commands
 
@@ -370,6 +371,113 @@ you want to delete Airflow run history, task logs and the generated admin passwo
 reset the pipeline database. Database resets are still done only with `make reset-db`, which
 prints a data-loss warning and requires typed confirmation.
 
+## Object storage lake
+
+Needs the `s3` Compose profile, plus `make up` and `make transform` for the export. The store
+is [SeaweedFS](https://github.com/seaweedfs/seaweedfs) 4.48, an S3-compatible server, pinned by
+digest. The lake is written and read only through the S3 API (boto3), so pointing it at AWS S3
+is a change of `.env` settings, which must not be done without explicit approval.
+
+**Deviation from the plan's "minio profile":** MinIO's free container images were discontinued
+in 2026 (Docker Hub repositories removed, `quay.io/minio` answering 401), so the profile is named
+after its role, `s3`, and the store is SeaweedFS.
+
+| Command | What it does |
+|---|---|
+| `make s3-up` | Checks the `S3_` variables, starts the store (S3 API on `127.0.0.1:${S3_API_PORT}`), waits until healthy, then creates the bucket with the admin key (`bucket deliverypulse: created` or `already exists`) |
+| `make lake-export` | Builds the three layers and uploads them with the pipeline key; then deletes stale keys under the layer prefixes. Prints objects, rows, bytes and `stale_deleted` |
+| `make lake-check` | Reads every lake object back through S3 and reconciles it with its source; exits 1 on any difference |
+| `make test-s3` | Tests against the live store (marker `s3`): export, check and replay round trip; the pipeline key cannot create buckets or write to another bucket |
+| `make s3-stats` | Memory and CPU of the store container |
+| `make s3-logs` | The last log lines of the store containers |
+| `make s3-down` | Stops the store; keeps its volumes (`deliverypulse_s3_data`, `deliverypulse_s3_config`) |
+
+**Two-file layout.** As for Airflow, the store lives in `docker-compose.s3.yml`, layered on
+`docker-compose.yml` (`docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile s3`).
+`docker-compose.yml` contains no `S3_` variable, so `make up` runs with a `.env` that has none (a
+unit test and the CI integration job prove it).
+
+**Keys and least privilege.**
+- `.env` holds two keys, each 16 to 128 letters and digits: `S3_ADMIN_ACCESS_KEY` /
+  `S3_ADMIN_SECRET_KEY` and the pipeline's `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`.
+  `scripts/s3_env_check.sh` rejects placeholders, other characters and identical keys, without
+  printing values.
+- The one-shot `s3-config` service writes SeaweedFS's identity file from those variables into the
+  named volume `deliverypulse_s3_config` (mode 600, owned by the store's user). The keys never
+  enter an image or a project file.
+- The admin identity (`Admin`) is used only by `make s3-up` to create the bucket. The pipeline
+  identity has `Read`, `List` and `Write` on the lake bucket only. `make test-s3` proves that it
+  gets `AccessDenied` for creating a bucket and for writing to another bucket.
+- The export and the check read the aggregates as `deliverypulse_readonly`.
+
+**Layout** (Hive-style; one prefix per table, so each table reads as one dataset). This is a
+documented deviation from the plan's example `s3://deliverypulse/raw/date=YYYY-MM-DD/...`: the
+table comes before the date partition (`raw/<table>/date=...`), so a query engine can read each
+table, with its own schema, as one partitioned dataset.
+
+```text
+s3://deliverypulse/raw/<source>/date=<ingestion date>/batch-<NN>.parquet
+s3://deliverypulse/cleaned/drivers/part-0.parquet
+s3://deliverypulse/cleaned/<orders|delivery_events|shift_events>/date=<reporting date>/part-0.parquet
+s3://deliverypulse/aggregated/<daily_delivery_metrics|driver_performance>/date=<metric_date>/part-0.parquet
+```
+
+- **raw**: one object per batch and source, partitioned by **batch ingestion date**: the
+  reporting date (Asia/Kolkata) of the batch cutoff, the window end recorded in `batch.json`
+  (2026-09-17, 2026-09-24 and 2026-10-01 for the default dataset). It comes from the data, not
+  the clock, so a re-export writes the same keys. Each row holds the batch metadata, the source
+  row number, the parse-error flag, the original payload and the contract fields, all as text:
+  a normalised representation of the immutable raw files, not a copy of them.
+- **cleaned**: the `make transform` output uploaded byte for byte: orders and events by IST
+  reporting date, drivers unpartitioned.
+- **aggregated**: `analytics.daily_delivery_metrics` and `analytics.driver_performance`, one
+  object per `metric_date`.
+
+**Export, idempotency and failure.**
+- Every object is uploaded first. Only then are the keys under `raw/`, `cleaned/` and
+  `aggregated/` that the new export does not contain deleted, so a failure never leaves the lake
+  half empty. Keys outside these prefixes are never touched.
+- `DeleteObjects` reports per-key failures in its answer; any failure stops the export with an
+  error naming the first key.
+- Parquet bytes are deterministic for one `uv.lock`, so a replay writes the same keys and bytes
+  (`stale_deleted=0`).
+- S3 errors print one line, `ERROR: S3 request failed: <operation and code>`, and exit 1. No key
+  is ever printed.
+- The bucket is created by `make s3-up`, with `LocationConstraint` set when `S3_REGION` is not
+  `us-east-1` (needed on AWS).
+
+**What "the pipeline reads and writes through the S3 API" means here** (approved 2026-10-14):
+`make lake-export` writes every layer through S3, and `make lake-check` reads every object back
+through S3 and reconciles it with its source. Keys: no missing and no extra object. Rows: the raw
+files, the cleaned Parquet and the database aggregates. Bytes: identical. No pipeline stage
+consumes the lake yet.
+
+**Run order** (from a loaded database):
+
+```bash
+make up
+make s3-up
+make transform
+make lake-export
+make lake-check
+make s3-down
+```
+
+**Measured 2026-10-14** (default dataset, 50,000 orders):
+
+| Step | Result |
+|---|---|
+| `make s3-up` (first start) | store healthy and bucket created in 7.62 s |
+| `make lake-export` | 118 objects, 1,093,033 rows, 57,501,391 bytes in 9.02 s; max RSS 923,090,944 bytes |
+| `make lake-check` | raw 12 objects / 541,536 rows, cleaned 64 / 539,047, aggregated 42 / 12,450; all match; 7.99 s |
+| Replay (`make lake-export` again) | same 118 objects, `stale_deleted=0`; `make lake-check` passes |
+| Store memory (`make s3-stats`) | With the first limit of 512 MiB: 88.14 MiB after start, 403.3 MiB (79 %) after two exports and checks. The limit was then raised to 768 MiB: 151.7 MiB after a restart, 355.9 MiB (46 %) after `make test-s3` and `make lake-check` |
+
+**Known log line.** On start, SeaweedFS logs `Failed to load IAM configuration: no signing key
+found for STS service`. It concerns its optional STS (temporary credentials) service. The
+identity file is loaded: the admin key creates the bucket, and the live tests prove the pipeline
+key's limits.
+
 ## Continuous integration and security scanning
 
 Two GitHub Actions workflows run on every push to `main` and every pull request; `security.yml`
@@ -381,11 +489,12 @@ also runs weekly. Both have `permissions: contents: read` and use no repository 
 | | Unit tests (no services) | `make test` |
 | | Integration tests and coverage (PostgreSQL) | `.env` with generated, masked passwords; `make up`; `make test-integration`; `make coverage`; container logs on failure; `make down` |
 | | Airflow DAG parse check | `.env` with generated, masked passwords; `make airflow-dag-check` |
+| | Object store tests | `.env` with generated, masked passwords and keys; `make up`; `make s3-up`; `make test-s3`; logs on failure; `make s3-down`, `make down` |
 | | Determinism check (Linux) | `make generate-check ORDERS=1500 SEED=7` |
 | `security.yml` | Secret scan (gitleaks) | `make scan` (working tree), then `gitleaks git` over the full history |
 | | Dependency audit | `make audit` |
 | | Static analysis | `make bandit` |
-| | Trivy | `trivy fs` on the repository (fails on fixable HIGH/CRITICAL); `trivy image` on the pinned PostgreSQL and Airflow images (report only, exit code 0) |
+| | Trivy | `trivy fs` on the repository (fails on fixable HIGH/CRITICAL); `trivy image` on the pinned PostgreSQL, Airflow and SeaweedFS images (report only, exit code 0) |
 
 Local equivalents (all through `uv run`):
 
@@ -413,6 +522,7 @@ Local equivalents (all through `uv run`):
 | gitleaks 8.30.1 binary | `security.yml` (`GITLEAKS_SHA256`) | The `gitleaks_8.30.1_linux_x64.tar.gz` line of the release's `gitleaks_8.30.1_checksums.txt` |
 | `postgres:18.6-trixie` digest | `tests.yml`, `security.yml` | `docker buildx imagetools inspect postgres:18.6-trixie`: the top-level `Digest:` (the multi-architecture index) |
 | `apache/airflow:3.3.2-python3.12` digest `sha256:9df9c8be4096b9cc626bd7cb1f2b8c712eef66c59c615f8c7e6200871ca10bd1` | `docker/airflow/Dockerfile`, `docker-compose.airflow.yml` (`airflow-dag-check`), `Makefile` (`AIRFLOW_BASE_IMAGE`), `security.yml` | `docker buildx imagetools inspect apache/airflow:3.3.2-python3.12`: the top-level `Digest:` |
+| `chrislusf/seaweedfs:4.48` digest `sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d` | `docker-compose.s3.yml`, `security.yml` | `docker buildx imagetools inspect chrislusf/seaweedfs:4.48`: the top-level `Digest:`; its platforms include `linux/arm64` and `linux/amd64` |
 | `ghcr.io/astral-sh/uv:0.13.0` digest `sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168` | `docker/airflow/Dockerfile` (copies the `uv` binary) | `docker buildx imagetools inspect ghcr.io/astral-sh/uv:0.13.0`: the top-level `Digest:` |
 
 Every pin fails safe: a wrong SHA, checksum or digest stops the job rather than running
@@ -482,6 +592,7 @@ removes it if so, and reports clearly if it did not exist. Aborting (any answer 
 | Profile | Services | Approximate RAM | Hard limit |
 |---|---|---|---|
 | `core` | PostgreSQL | ~50-150 MiB idle; up to a few hundred MiB under analytical queries with default settings (`shared_buffers` 128 MB) | 1 GiB (`mem_limit`) |
+| `s3` | SeaweedFS (master, volume, filer and S3 gateway in one process) | Measured 2026-10-14: 88-152 MiB after start; up to 403.3 MiB after exporting and checking the default dataset twice | 768 MiB (`mem_limit`; raised from 512 MiB ahead of larger datasets) |
 | `core` + `airflow` | PostgreSQL, airflow-db, api-server, scheduler, dag-processor | Measured 2026-10-14: about 1.0-1.1 GiB idle; peak 2.12-2.26 GiB during a full DAG run | sum of limits 5.25 GiB (per-container limits in "Airflow orchestration") |
 
 **Airflow, measured 2026-10-14** (`make airflow-stats`, sampled every few seconds while the last

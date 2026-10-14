@@ -39,12 +39,15 @@ COMPOSE_AIRFLOW := $(COMPOSE_AIRFLOW_FILES) --profile core --profile airflow
 AIRFLOW_IMAGE := deliverypulse-airflow:3.3.2
 AIRFLOW_BASE_IMAGE := apache/airflow:3.3.2-python3.12@sha256:9df9c8be4096b9cc626bd7cb1f2b8c712eef66c59c615f8c7e6200871ca10bd1
 DAG_ID := delivery_pipeline
+# Object store: its services live in docker-compose.s3.yml, layered on the core file, so the
+# core targets need no S3_ variable.
+COMPOSE_S3 := docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile s3
 # Minimum combined (unit + integration) line coverage of src/ for `make coverage`.
 COVERAGE_MIN ?= 80
 # Admin-only: runs a SQL file inside the container as the bootstrap superuser (index DDL).
 ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f /deliverypulse/sql/$(1)'
 
-.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset
+.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset s3-up s3-down s3-logs s3-stats lake-export lake-check test-s3
 
 help:
 	@echo "DeliveryPulse targets:"
@@ -90,6 +93,13 @@ help:
 	@echo "  make airflow-stats     memory and CPU of every running DeliveryPulse container"
 	@echo "  make airflow-dag-check parse and verify the DAG inside the pinned Airflow image"
 	@echo "  make airflow-image-info size of the Airflow image and of the project venv inside it"
+	@echo "  make s3-up             start the object store (S3 API on 127.0.0.1), wait until healthy, create the bucket"
+	@echo "  make s3-down           stop the object store; KEEPS its volumes"
+	@echo "  make s3-logs           last log lines of the object-store containers"
+	@echo "  make s3-stats          memory and CPU of the object-store container"
+	@echo "  make lake-export       write the raw, cleaned and aggregated Parquet layers to the bucket (needs make up, make transform)"
+	@echo "  make lake-check        read every lake object back through S3 and reconcile it with its source"
+	@echo "  make test-s3           tests against the live object store (needs make up and make s3-up)"
 	@echo "  make airflow-reset     DELETE Airflow's metadata, logs and password (asks for confirmation)"
 
 lint:
@@ -237,3 +247,29 @@ airflow-image-info:
 
 airflow-reset:
 	bash scripts/airflow_reset.sh
+
+s3-up:
+	bash scripts/s3_env_check.sh
+	$(COMPOSE_S3) up -d --wait --wait-timeout 180
+	$(UV_RUN) python -m src.lake.bootstrap
+
+s3-down:
+	$(COMPOSE_S3) down
+
+s3-logs:
+	$(COMPOSE_S3) logs --no-color --tail 60
+
+s3-stats:
+	docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}" $$($(COMPOSE_S3) ps -q)
+
+lake-export:
+	bash scripts/s3_env_check.sh
+	$(UV_RUN) python -m src.lake.export --raw-dir $(RAW_DIR) --processed-dir $(PROCESSED_DIR) $(DATASET_ARG)
+
+lake-check:
+	bash scripts/s3_env_check.sh
+	$(UV_RUN) python -m src.lake.check --raw-dir $(RAW_DIR) --processed-dir $(PROCESSED_DIR) $(DATASET_ARG)
+
+test-s3:
+	bash scripts/s3_env_check.sh
+	$(UV_RUN) pytest -m s3
