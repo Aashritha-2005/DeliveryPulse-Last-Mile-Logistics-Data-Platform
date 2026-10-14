@@ -20,8 +20,9 @@ that the new export no longer contains, so the lake is never emptied part-way.
 
 import argparse
 import io
+import itertools
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -165,61 +166,60 @@ def ingestion_date(batch: Batch) -> str:
     return format_reporting_date(batch.window_end)
 
 
-def raw_rows(batch: Batch, source: str, source_file: str) -> list[dict[str, Any]]:
-    """Rows of one normalised raw object: batch metadata, the payload and the contract fields."""
-    rows: list[dict[str, Any]] = []
-    for record in batch.records[source]:
-        row: dict[str, Any] = {
-            "batch_id": batch.batch_id,
-            "batch_sequence": batch.sequence,
-            "source_file": source_file,
-            "source_row_number": record.row_number,
-            "record_key": record.key,
-            "parse_error": record.parse_error,
-            "raw_payload": record.raw,
-        }
-        row.update(record.fields)
-        rows.append(row)
-    return rows
+def raw_table(batch: Batch, source: str, source_file: str) -> pa.Table:
+    """One normalised raw object: batch metadata, the payload and the contract fields.
+
+    Built column by column (no dictionary per row), so the only per-row objects in memory are
+    the batch's own records.
+    """
+    records = batch.records[source]
+    count = len(records)
+    columns: dict[str, list[Any]] = {
+        "batch_id": [batch.batch_id] * count,
+        "batch_sequence": [batch.sequence] * count,
+        "source_file": [source_file] * count,
+        "source_row_number": [record.row_number for record in records],
+        "record_key": [record.key for record in records],
+        "parse_error": [record.parse_error for record in records],
+        "raw_payload": [record.raw for record in records],
+    }
+    for column in SOURCE_COLUMNS[source]:
+        columns[column] = [record.fields.get(column) for record in records]
+    return pa.Table.from_pydict(columns, schema=RAW_SCHEMAS[source])
 
 
-def raw_objects(dataset_dir: Path, prefix: str = "") -> list[LakeObject]:
-    """The raw layer: one object per batch and source, partitioned by ingestion date."""
-    objects: list[LakeObject] = []
+def raw_objects(dataset_dir: Path, prefix: str = "") -> Iterator[LakeObject]:
+    """The raw layer: one object per batch and source, partitioned by ingestion date.
+
+    Objects are built one at a time; only one batch's records are in memory.
+    """
     for folder in batch_folders(dataset_dir):
         batch = load_batch(folder)
         day = ingestion_date(batch)
         for source, source_file in SOURCE_FILES:
-            table = pa.Table.from_pylist(
-                raw_rows(batch, source, source_file), schema=RAW_SCHEMAS[source]
-            )
             key = f"{prefix}raw/{source}/date={day}/batch-{batch.sequence:02d}.parquet"
-            objects.append(_table_object(key, table))
-    return objects
+            yield _table_object(key, raw_table(batch, source, source_file))
+        del batch  # release this batch's records before loading the next
 
 
-def cleaned_objects(cleaned_dir: Path, prefix: str = "") -> list[LakeObject]:
+def cleaned_objects(cleaned_dir: Path, prefix: str = "") -> Iterator[LakeObject]:
     """The cleaned layer: every Parquet file of ``make transform`` output, unchanged."""
     if not cleaned_dir.is_dir():
         raise LakeExportError(f"Cleaned Parquet not found at {cleaned_dir}; run make transform.")
-    objects: list[LakeObject] = []
-    for path in sorted(cleaned_dir.rglob("*.parquet")):
-        relative = path.relative_to(cleaned_dir).as_posix()
-        objects.append(
-            LakeObject(
-                key=f"{prefix}cleaned/{relative}",
-                body=path.read_bytes(),
-                rows=pq.read_metadata(path).num_rows,
-            )
-        )
-    if not objects:
+    paths = sorted(cleaned_dir.rglob("*.parquet"))
+    if not paths:
         raise LakeExportError(f"No Parquet files under {cleaned_dir}; run make transform.")
-    return objects
+    for path in paths:
+        relative = path.relative_to(cleaned_dir).as_posix()
+        yield LakeObject(
+            key=f"{prefix}cleaned/{relative}",
+            body=path.read_bytes(),
+            rows=pq.read_metadata(path).num_rows,
+        )
 
 
-def aggregated_objects(aggregates: AggregateRows, prefix: str = "") -> list[LakeObject]:
+def aggregated_objects(aggregates: AggregateRows, prefix: str = "") -> Iterator[LakeObject]:
     """The aggregated layer: one object per table and ``metric_date``."""
-    objects: list[LakeObject] = []
     for table_name, schema in AGGREGATE_SCHEMAS.items():
         by_day: dict[str, list[Mapping[str, Any]]] = {}
         for row in aggregates.get(table_name, ()):
@@ -227,8 +227,7 @@ def aggregated_objects(aggregates: AggregateRows, prefix: str = "") -> list[Lake
         for day, rows in sorted(by_day.items()):
             table = pa.Table.from_pylist([dict(row) for row in rows], schema=schema)
             key = f"{prefix}aggregated/{table_name}/date={day}/part-0.parquet"
-            objects.append(_table_object(key, table))
-    return objects
+            yield _table_object(key, table)
 
 
 def read_aggregates(conn: Connection) -> dict[str, list[dict[str, Any]]]:
@@ -243,18 +242,24 @@ def read_aggregates(conn: Connection) -> dict[str, list[dict[str, Any]]]:
 
 def build_lake(
     dataset_dir: Path, cleaned_dir: Path, aggregates: AggregateRows, prefix: str = ""
-) -> list[LakeObject]:
-    """Every object of the lake, in key order."""
+) -> Iterator[LakeObject]:
+    """Every object of the lake, built lazily one at a time (raw, then cleaned, then aggregated).
+
+    Only the keys seen so far are kept, to refuse two objects with one key.
+    """
     validate_prefix(prefix)
-    objects = [
-        *raw_objects(dataset_dir, prefix),
-        *cleaned_objects(cleaned_dir, prefix),
-        *aggregated_objects(aggregates, prefix),
-    ]
-    keys = [item.key for item in objects]
-    if len(set(keys)) != len(keys):
-        raise LakeExportError("Two lake objects would share one key.")
-    return sorted(objects, key=lambda item: item.key)
+    if not cleaned_dir.is_dir():  # fail before any upload, not after the raw layer
+        raise LakeExportError(f"Cleaned Parquet not found at {cleaned_dir}; run make transform.")
+    seen: set[str] = set()
+    for item in itertools.chain(
+        raw_objects(dataset_dir, prefix),
+        cleaned_objects(cleaned_dir, prefix),
+        aggregated_objects(aggregates, prefix),
+    ):
+        if item.key in seen:
+            raise LakeExportError(f"Two lake objects would share the key {item.key}.")
+        seen.add(item.key)
+        yield item
 
 
 def layer_objects(client: S3Client, bucket: str, prefix: str = "") -> list[S3Object]:
@@ -263,28 +268,26 @@ def layer_objects(client: S3Client, bucket: str, prefix: str = "") -> list[S3Obj
 
 
 def export_lake(
-    client: S3Client, bucket: str, objects: Sequence[LakeObject], prefix: str = ""
+    client: S3Client, bucket: str, objects: Iterable[LakeObject], prefix: str = ""
 ) -> ExportResult:
-    """Upload ``objects``, then delete the stale keys under the layer prefixes.
+    """Upload ``objects`` one at a time, then delete the stale keys under the layer prefixes.
 
-    The bucket must already exist: the pipeline key may not create buckets
-    (``make s3-up`` creates it with the admin key).
+    Each object's bytes are released after its upload, so memory stays at one object. The
+    bucket must already exist: the pipeline key may not create buckets (``make s3-up`` creates
+    it with the admin key).
     """
     validate_prefix(prefix)
     if not bucket_exists(client, bucket):
         raise LakeExportError(f"Bucket {bucket!r} does not exist; run make s3-up to create it.")
-    uploaded = tuple(
-        put_bytes(client, bucket, item.key, item.body, PARQUET_CONTENT_TYPE) for item in objects
-    )
-    current = {item.key for item in objects}
+    uploaded: list[S3Object] = []
+    rows = 0
+    for item in objects:
+        uploaded.append(put_bytes(client, bucket, item.key, item.body, PARQUET_CONTENT_TYPE))
+        rows += item.rows
+    current = {item.key for item in uploaded}
     stale = [item.key for item in layer_objects(client, bucket, prefix) if item.key not in current]
     deleted = delete_keys(client, bucket, stale)
-    return ExportResult(
-        bucket=bucket,
-        uploaded=uploaded,
-        rows=sum(item.rows for item in objects),
-        stale_deleted=deleted,
-    )
+    return ExportResult(bucket=bucket, uploaded=tuple(uploaded), rows=rows, stale_deleted=deleted)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

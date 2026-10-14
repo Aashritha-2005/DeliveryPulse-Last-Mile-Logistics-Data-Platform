@@ -35,6 +35,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_SQL = PROJECT_ROOT / "sql" / "schema.sql"
 
 # Modules allowed to reference the ground truth (besides src/groundtruth/ and tests/).
+# src/bench/shards.py only passes a destination directory to the generator, which always writes
+# a manifest; it deletes that directory with the shard's raw files and never reads the manifest
+# (test_shard_builder_discards_the_generators_ground_truth below).
 GROUND_TRUTH_ALLOWLIST = frozenset(
     {
         "src/ingestion/generate_data.py",
@@ -42,6 +45,7 @@ GROUND_TRUTH_ALLOWLIST = frozenset(
         "src/ingestion/defects.py",
         "src/ingestion/writers.py",
         "src/ingestion/generator_config.py",
+        "src/bench/shards.py",
     }
 )
 

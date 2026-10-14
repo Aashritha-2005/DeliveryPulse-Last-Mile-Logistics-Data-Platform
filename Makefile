@@ -7,6 +7,10 @@
 
 UV_RUN := uv run
 GITLEAKS_CONFIG := .gitleaks.toml
+# Python files outside src/ (scripts/*.py); lint, mypy and bandit cover them too, so moving
+# code out of src/ never leaves it unscanned. Listed explicitly: GNU Make 3.81 has no $(wildcard
+# ...) sorting guarantee issues here, but an explicit list fails loudly when a file is renamed.
+PY_SCRIPTS := scripts/airflow_dag_check.py scripts/benchmark.py
 COMPOSE := docker compose --profile core
 INIT_SCRIPT := docker/postgres/init-deliverypulse.sh
 
@@ -42,12 +46,20 @@ DAG_ID := delivery_pipeline
 # Object store: its services live in docker-compose.s3.yml, layered on the core file, so the
 # core targets need no S3_ variable.
 COMPOSE_S3 := docker compose -f docker-compose.yml -f docker-compose.s3.yml --profile s3
+# Benchmark (bench dependency group; PySpark needs a Java 21 runtime). Every benchmark command
+# resolves JAVA_HOME with java_home -v 21 and fails with a clear message when it is missing.
+JAVA_21 = $$(/usr/libexec/java_home -v 21 2>/dev/null || true)
+REQUIRE_JAVA_21 = test -n "$(JAVA_21)" || { echo "ERROR: Java 21 not found. Install it (for example: brew install --cask temurin@21) and check with: /usr/libexec/java_home -v 21" >&2; exit 1; }
+BENCH_LARGEST ?= 2m
+BENCH_RUNS ?= 3
+BENCH_SHARDS ?= 1
+BENCH_BUDGET_GIB ?= 4
 # Minimum combined (unit + integration) line coverage of src/ for `make coverage`.
 COVERAGE_MIN ?= 80
 # Admin-only: runs a SQL file inside the container as the bootstrap superuser (index DDL).
 ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f /deliverypulse/sql/$(1)'
 
-.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset s3-up s3-down s3-logs s3-stats lake-export lake-check test-s3
+.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset s3-up s3-down s3-logs s3-stats lake-export lake-check test-s3 test-spark bench-data benchmark bench-clean db-sizes
 
 help:
 	@echo "DeliveryPulse targets:"
@@ -100,12 +112,17 @@ help:
 	@echo "  make lake-export       write the raw, cleaned and aggregated Parquet layers to the bucket (needs make up, make transform)"
 	@echo "  make lake-check        read every lake object back through S3 and reconcile it with its source"
 	@echo "  make test-s3           tests against the live object store (needs make up and make s3-up)"
+	@echo "  make bench-data SHARDS=n  build n benchmark shards of 50,000 orders (disk-guarded)"
+	@echo "  make benchmark         pandas vs PySpark at every size that fits the disk budget (needs Java 21)"
+	@echo "  make test-spark        pandas/Spark equivalence tests (needs Java 21)"
+	@echo "  make bench-clean       DELETE data/bench/ (asks for confirmation)"
+	@echo "  make db-sizes          on-disk size of every project table, largest first"
 	@echo "  make airflow-reset     DELETE Airflow's metadata, logs and password (asks for confirmation)"
 
 lint:
 	$(UV_RUN) ruff check .
 	$(UV_RUN) ruff format --check .
-	$(UV_RUN) mypy src tests
+	$(UV_RUN) mypy src tests $(PY_SCRIPTS)
 
 format:
 	$(UV_RUN) ruff check --fix .
@@ -125,7 +142,7 @@ audit:
 	bash scripts/pip_audit.sh
 
 bandit:
-	$(UV_RUN) bandit -r src
+	$(UV_RUN) bandit -r src $(PY_SCRIPTS)
 
 actionlint:
 	$(UV_RUN) actionlint
@@ -177,6 +194,9 @@ reconcile-db:
 
 db-counts:
 	$(UV_RUN) python -m src.database.db_counts
+
+db-sizes:
+	$(UV_RUN) python -m src.database.db_sizes
 
 metrics:
 	$(UV_RUN) python -m src.database.metrics
@@ -273,3 +293,17 @@ lake-check:
 test-s3:
 	bash scripts/s3_env_check.sh
 	$(UV_RUN) pytest -m s3
+
+test-spark:
+	@$(REQUIRE_JAVA_21)
+	JAVA_HOME="$(JAVA_21)" $(UV_RUN) --group bench pytest -m spark
+
+bench-data:
+	PYTHONPATH=$(CURDIR) $(UV_RUN) --group bench python -m src.bench.shards --shards $(BENCH_SHARDS) --budget-gib $(BENCH_BUDGET_GIB)
+
+benchmark:
+	@$(REQUIRE_JAVA_21)
+	JAVA_HOME="$(JAVA_21)" PYTHONPATH=$(CURDIR) $(UV_RUN) --group bench python scripts/benchmark.py --largest $(BENCH_LARGEST) --runs $(BENCH_RUNS) --budget-gib $(BENCH_BUDGET_GIB)
+
+bench-clean:
+	bash scripts/bench_clean.sh

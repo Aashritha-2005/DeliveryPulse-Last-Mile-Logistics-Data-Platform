@@ -35,8 +35,9 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: ${{ env.UV_VERSION }}
-      - name: Install locked dependencies
-        run: uv sync --locked
+      - name: Install locked dependencies, including the benchmark engines
+        # The bench group is installed so mypy also checks src/bench and scripts/benchmark.py.
+        run: uv sync --locked --group bench
       - name: Lint, format check and mypy (make lint)
         run: make lint
       - name: Validate workflows and Dependabot config (make actionlint)
@@ -172,6 +173,24 @@ jobs:
       - name: Stop the object store and PostgreSQL
         if: always()
         run: make s3-down && make down
+
+  spark:
+    name: Benchmark engines (pandas vs PySpark)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install locked dependencies, including the benchmark engines
+        run: uv sync --locked --group bench
+      - name: Equivalence tests with the runner's Java 21 (make test-spark)
+        # The Makefile resolves JAVA_HOME with java_home -v 21, which exists on macOS only; on
+        # Linux the runner's preinstalled Temurin 21 is used directly. Both run the same tests.
+        run: JAVA_HOME="${JAVA_HOME_21_X64}" uv run --group bench pytest -m spark
 
   determinism:
     name: Determinism check (Linux)

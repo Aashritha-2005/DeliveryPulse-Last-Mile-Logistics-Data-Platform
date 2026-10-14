@@ -26,6 +26,13 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.8",
 ]
+# Benchmark engines (scripts/benchmark.py): installed only with `uv sync --locked --group bench`,
+# never by a plain `uv sync --locked` or in the Airflow image. PySpark needs Java 21.
+bench = [
+    "pandas==3.0.6",
+    "psutil==7.2.2",
+    "pyspark==4.2.0",
+]
 
 [tool.uv]
 # Not an installable package: code is run from the project root via `uv run`.
@@ -51,9 +58,23 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 
-# pyarrow, boto3 and botocore ship without type information; their objects are treated as Any.
+# pyarrow, boto3, botocore and pandas ship without type information here; their objects are
+# treated as Any. PySpark ships its own type hints and is checked.
 [[tool.mypy.overrides]]
-module = ["boto3", "boto3.*", "botocore", "botocore.*", "pyarrow", "pyarrow.*"]
+module = [
+    # Airflow is installed only inside the Airflow image, where scripts/airflow_dag_check.py runs.
+    "airflow",
+    "airflow.*",
+    "boto3",
+    "boto3.*",
+    "botocore",
+    "botocore.*",
+    "pandas",
+    "pandas.*",
+    "psutil",
+    "pyarrow",
+    "pyarrow.*",
+]
 ignore_missing_imports = true
 
 # -------------------------------------------------------------- pytest ---
@@ -66,4 +87,5 @@ markers = [
     "unit: fast tests with no external services (no database, no Docker)",
     "integration: tests that need running services such as PostgreSQL",
     "s3: tests that need PostgreSQL and the local object store (make up, make s3-up)",
+    "spark: tests that need a Java 21 runtime and the bench dependency group (make test-spark)",
 ]

@@ -14,7 +14,7 @@ with what the bucket holds:
 import argparse
 import io
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,26 +57,34 @@ class LayerReport:
 
 
 def check_lake(
-    client: S3Client, bucket: str, expected: Sequence[LakeObject], prefix: str = ""
+    client: S3Client, bucket: str, expected: Iterable[LakeObject], prefix: str = ""
 ) -> list[LayerReport]:
-    """Reconcile the stored lake with ``expected``; raise :class:`LakeCheckError` on a mismatch."""
+    """Reconcile the stored lake with ``expected``; raise :class:`LakeCheckError` on a mismatch.
+
+    ``expected`` is consumed one object at a time; each stored object is downloaded, compared
+    and released before the next, so memory stays at one object.
+    """
     validate_prefix(prefix)
-    wanted = {item.key: item for item in expected}
     stored = {item.key for item in layer_objects(client, bucket, prefix)}
-    problems = [f"missing object: {key}" for key in sorted(wanted.keys() - stored)]
-    problems += [f"unexpected object: {key}" for key in sorted(stored - wanted.keys())]
+    wanted: set[str] = set()
+    problems: list[str] = []
     objects = dict.fromkeys(LAYERS, 0)
     rows = dict.fromkeys(LAYERS, 0)
-    for key in sorted(wanted.keys() & stored):
-        payload = download_bytes(client, bucket, key)
+    for item in expected:
+        wanted.add(item.key)
+        if item.key not in stored:
+            continue
+        payload = download_bytes(client, bucket, item.key)
         stored_rows = pq.read_metadata(io.BytesIO(payload)).num_rows
-        if stored_rows != wanted[key].rows:
-            problems.append(f"{key}: {stored_rows} rows, source has {wanted[key].rows}")
-        if payload != wanted[key].body:
-            problems.append(f"{key}: content differs from the source")
-        layer = key.removeprefix(prefix).split("/", 1)[0]
+        if stored_rows != item.rows:
+            problems.append(f"{item.key}: {stored_rows} rows, source has {item.rows}")
+        if payload != item.body:
+            problems.append(f"{item.key}: content differs from the source")
+        layer = item.key.removeprefix(prefix).split("/", 1)[0]
         objects[layer] += 1
         rows[layer] += stored_rows
+    problems = [f"missing object: {key}" for key in sorted(wanted - stored)] + problems
+    problems += [f"unexpected object: {key}" for key in sorted(stored - wanted)]
     if problems:
         shown = problems[:MAX_REPORTED_PROBLEMS]
         more = len(problems) - len(shown)

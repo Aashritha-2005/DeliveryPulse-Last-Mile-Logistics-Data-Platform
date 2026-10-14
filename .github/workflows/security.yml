@@ -80,7 +80,7 @@ jobs:
           version: ${{ env.UV_VERSION }}
       - name: Install locked dependencies
         run: uv sync --locked
-      - name: Insecure code patterns in src/ (make bandit)
+      - name: Insecure code patterns in src/ and scripts/*.py (make bandit)
         run: make bandit
 
   trivy:

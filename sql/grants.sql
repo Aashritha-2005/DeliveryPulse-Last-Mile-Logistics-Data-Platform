@@ -8,7 +8,8 @@
 --                           staging: SELECT, INSERT, UPDATE, DELETE, TRUNCATE
 --                           analytics: SELECT, INSERT, UPDATE, DELETE
 --                           audit: SELECT, INSERT, UPDATE
---                           no CREATE on any schema (no DDL)
+--                           no CREATE on any schema (no DDL), no MAINTAIN on any table
+--                           EXECUTE on staging.analyze_quality_tables() only
 --   deliverypulse_readonly  analytics: USAGE + SELECT only; nothing anywhere else
 --
 -- The target database name comes from the psql variable `dbname` (psql -v dbname=...), because
@@ -33,6 +34,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA analytics TO delive
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA audit TO deliverypulse_etl;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA raw, staging, audit TO deliverypulse_etl;
 
+-- The quality gate's statistics function (schema.sql). PostgreSQL grants EXECUTE on new
+-- functions to PUBLIC by default; that is revoked, so only the ETL role may call it. The ETL
+-- role gets no MAINTAIN privilege on any table.
+REVOKE ALL ON FUNCTION staging.analyze_quality_tables() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION staging.analyze_quality_tables() TO deliverypulse_etl;
+
 -- ------------------------------------------------------- deliverypulse_readonly ---
 GRANT USAGE ON SCHEMA analytics TO deliverypulse_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO deliverypulse_readonly;
@@ -51,3 +58,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE deliverypulse_owner IN SCHEMA raw, staging, au
 
 ALTER DEFAULT PRIVILEGES FOR ROLE deliverypulse_owner IN SCHEMA analytics
     GRANT SELECT ON TABLES TO deliverypulse_readonly;
+
+-- Future functions of the owner are not executable by PUBLIC either.
+ALTER DEFAULT PRIVILEGES FOR ROLE deliverypulse_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;

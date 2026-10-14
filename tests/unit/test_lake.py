@@ -1,7 +1,7 @@
 """Unit tests of the S3 lake (no services): an in-memory S3 fake stands in for the store."""
 
 import io
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -165,7 +165,7 @@ def cleaned_dir(dataset_a: GeneratedDataset, tmp_path_factory: pytest.TempPathFa
 
 @pytest.fixture(scope="module")
 def lake(dataset_a: GeneratedDataset, cleaned_dir: Path) -> list[LakeObject]:
-    return build_lake(dataset_a.dataset_dir, cleaned_dir, AGGREGATES)
+    return list(build_lake(dataset_a.dataset_dir, cleaned_dir, AGGREGATES))
 
 
 # ------------------------------------------------------------------------- S3 helpers ---
@@ -255,7 +255,7 @@ def test_raw_layer_has_one_object_per_batch_and_source_by_ingestion_date(
 
 
 def test_cleaned_layer_mirrors_the_transform_output(cleaned_dir: Path) -> None:
-    objects = cleaned_objects(cleaned_dir)
+    objects = list(cleaned_objects(cleaned_dir))
     local = sorted(cleaned_dir.rglob("*.parquet"))
 
     assert [item.key for item in objects] == [
@@ -270,7 +270,7 @@ def test_cleaned_layer_mirrors_the_transform_output(cleaned_dir: Path) -> None:
 
 def test_cleaned_layer_requires_the_transform_output(tmp_path: Path) -> None:
     with pytest.raises(LakeExportError, match="run make transform"):
-        cleaned_objects(tmp_path / "missing")
+        list(cleaned_objects(tmp_path / "missing"))
 
 
 def test_aggregated_layer_is_partitioned_by_metric_date() -> None:
@@ -331,12 +331,60 @@ def test_export_with_a_prefix_touches_only_that_prefix(
     client = FakeS3()
     export_lake(client, BUCKET, lake)
     before = stored(client)
-    prefixed = build_lake(dataset_a.dataset_dir, cleaned_dir, AGGREGATES, prefix="test-run/")
+    prefixed = list(build_lake(dataset_a.dataset_dir, cleaned_dir, AGGREGATES, prefix="test-run/"))
 
     export_lake(client, BUCKET, prefixed, prefix="test-run/")
 
     assert {k: v for k, v in stored(client).items() if not k.startswith("test-run/")} == before
     assert check_lake(client, BUCKET, prefixed, prefix="test-run/")
+
+
+def test_export_streams_one_object_at_a_time() -> None:
+    """Each object is uploaded before the next one is built, so only one is held in memory."""
+    client = FakeS3()
+    built: list[str] = []
+
+    def objects() -> Iterator[LakeObject]:
+        for index in range(3):
+            key = f"raw/orders/date=2026-09-1{index}/batch-01.parquet"
+            built.append(key)
+            client.log.append(f"build {key}")
+            yield LakeObject(key=key, body=b"x", rows=1)
+
+    result = export_lake(client, BUCKET, objects())
+
+    assert result.rows == 3
+    assert [entry.split(" ", 1)[0] for entry in client.log] == ["build", "put"] * 3
+
+
+def test_build_lake_fails_before_any_object_without_the_transform_output(
+    dataset_a: GeneratedDataset, tmp_path: Path
+) -> None:
+    lazy = build_lake(dataset_a.dataset_dir, tmp_path / "missing", AGGREGATES)
+
+    with pytest.raises(LakeExportError, match="run make transform"):
+        next(lazy)
+
+
+def test_build_lake_refuses_duplicate_keys(
+    dataset_a: GeneratedDataset, cleaned_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    duplicate = LakeObject(key="aggregated/x/date=2026-09-10/part-0.parquet", body=b"", rows=0)
+    monkeypatch.setattr(
+        "src.lake.export.aggregated_objects", lambda aggregates, prefix: iter([duplicate] * 2)
+    )
+
+    with pytest.raises(LakeExportError, match="share the key"):
+        list(build_lake(dataset_a.dataset_dir, cleaned_dir, AGGREGATES))
+
+
+def test_check_accepts_a_lazy_expected_stream(lake: list[LakeObject]) -> None:
+    client = FakeS3()
+    export_lake(client, BUCKET, iter(lake))
+
+    reports = check_lake(client, BUCKET, iter(lake))
+
+    assert sum(report.objects for report in reports) == len(lake)
 
 
 def test_export_needs_an_existing_bucket(lake: list[LakeObject]) -> None:
@@ -379,9 +427,9 @@ def test_check_finds_missing_extra_and_changed_objects(lake: list[LakeObject]) -
     export_lake(client, BUCKET, lake)
     removed, changed = lake[0].key, lake[-1].key
     client.objects.pop((BUCKET, removed))
-    client.objects[(BUCKET, changed)] = aggregated_objects(
-        {"driver_performance": [driver_row(date(2026, 9, 12), "DRV-00002")] * 2}
-    )[0].body
+    client.objects[(BUCKET, changed)] = next(
+        aggregated_objects({"driver_performance": [driver_row(date(2026, 9, 12), "DRV-00002")] * 2})
+    ).body
     put_bytes(client, BUCKET, "cleaned/orders/date=1999-01-01/part-0.parquet", b"x", "t")
 
     with pytest.raises(LakeCheckError) as excinfo:

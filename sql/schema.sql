@@ -446,4 +446,32 @@ COMMENT ON COLUMN audit.quality_results.threshold_kind IS
 COMMENT ON COLUMN audit.quality_results.sample_keys IS
     'Up to 10 business keys of failing rows; never record payloads.';
 
+-- ============================================================================================
+-- Planner statistics for the quality gate.
+-- During a load the quality checks read the batch's uncommitted rows. Without fresh statistics
+-- the planner estimates them as about one row and picks quadratic nested loops. ANALYZE inside
+-- the load's transaction counts those rows, but only a table's owner (or a role with MAINTAIN)
+-- may run it. This function, owned by deliverypulse_owner and running with its rights, analyzes
+-- a fixed list of tables and nothing else; deliverypulse_etl may only EXECUTE it (grants.sql).
+-- ============================================================================================
+
+CREATE FUNCTION staging.analyze_quality_tables() RETURNS void
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog
+AS $$
+BEGIN
+    ANALYZE raw.drivers_raw, raw.orders_raw, raw.events_raw, raw.shift_events_raw,
+            staging.rejected_records, staging.pending_events,
+            analytics.drivers, analytics.orders, analytics.delivery_events,
+            analytics.driver_shift_events, analytics.daily_delivery_metrics,
+            analytics.driver_performance,
+            audit.pipeline_runs, audit.record_dispositions;
+END;
+$$;
+
+COMMENT ON FUNCTION staging.analyze_quality_tables() IS
+    'ANALYZE the tables the quality checks read; called inside the load transaction before the '
+    'checks so the planner sees the batch''s uncommitted rows.';
+
 RESET ROLE;

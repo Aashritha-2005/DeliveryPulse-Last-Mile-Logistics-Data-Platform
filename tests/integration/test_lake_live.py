@@ -77,7 +77,7 @@ def test_export_and_check_round_trip_through_the_live_store(
     aggregates = read_aggregates(test_db)
     processed = tmp_path / "processed" / fixture_dataset.name
     run_transform(fixture_dataset, processed, config)
-    objects = build_lake(fixture_dataset, processed / "cleaned", aggregates, prefix)
+    objects = list(build_lake(fixture_dataset, processed / "cleaned", aggregates, prefix))
 
     first = export_lake(client, settings.bucket, objects, prefix)
     checked = check_lake(client, settings.bucket, objects, prefix)

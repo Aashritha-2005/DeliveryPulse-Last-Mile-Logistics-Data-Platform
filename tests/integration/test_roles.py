@@ -195,6 +195,61 @@ def test_etl_is_denied(etl_conn: Connection, statement: LiteralString) -> None:
     assert_denied(etl_conn, statement)
 
 
+ANALYZE_FUNCTION = "staging.analyze_quality_tables()"
+
+
+def test_etl_has_no_maintain_privilege_on_any_table(etl_conn: Connection) -> None:
+    granted = granted_table_privileges(etl_conn, ETL_ROLE)
+    assert {grant for grant in granted if grant[2] == "MAINTAIN"} == set()
+
+
+def executable_project_functions(conn: Connection, role: str) -> set[str]:
+    """Every function in the project schemas that ``role`` may execute, as schema.name()."""
+    rows = conn.execute(
+        """
+        SELECT n.nspname || '.' || p.proname || '()'
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ANY(%s) AND has_function_privilege(%s, p.oid, 'EXECUTE')
+        """,
+        (list(PROJECT_SCHEMAS), role),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def test_etl_may_execute_only_the_analyze_function(etl_conn: Connection) -> None:
+    assert executable_project_functions(etl_conn, ETL_ROLE) == {ANALYZE_FUNCTION}
+
+
+def test_readonly_and_public_may_not_execute_the_analyze_function(
+    readonly_conn: Connection,
+) -> None:
+    assert executable_project_functions(readonly_conn, READONLY_ROLE) == set()
+    # Looked up by name: the read-only role cannot even resolve names in the staging schema.
+    row = readonly_conn.execute(
+        """
+        SELECT count(*) FILTER (WHERE a.grantee = 0), count(*)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        CROSS JOIN LATERAL aclexplode(p.proacl) AS a
+        WHERE n.nspname = 'staging' AND p.proname = 'analyze_quality_tables'
+        """
+    ).fetchone()
+    assert row is not None and row[0] == 0 and row[1] > 0  # explicit ACL, no PUBLIC grant
+    assert_denied(readonly_conn, "SELECT staging.analyze_quality_tables()")
+
+
+def test_analyze_function_runs_as_owner_with_a_fixed_search_path(etl_conn: Connection) -> None:
+    row = etl_conn.execute(
+        """
+        SELECT pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig
+        FROM pg_proc p WHERE p.oid = %s::regprocedure
+        """,
+        (ANALYZE_FUNCTION,),
+    ).fetchone()
+    assert row == (OWNER_ROLE, True, ["search_path=pg_catalog"])
+
+
 def test_etl_cannot_create_in_any_schema(etl_conn: Connection) -> None:
     rows = etl_conn.execute(
         """

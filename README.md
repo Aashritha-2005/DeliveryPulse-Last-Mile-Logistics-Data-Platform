@@ -70,6 +70,10 @@ flowchart LR
   `make lake-check` reads every object back through S3 and reconciles keys, row counts and bytes
   with the raw files, the cleaned Parquet and the database. The pipeline's key can only read,
   write and list its bucket.
+- **Scale benchmark.** `make benchmark` runs the same cleaning and aggregation workload in
+  vectorised pandas and in PySpark over 50,000 to 2,000,000 orders, each run in its own process
+  with a warm-up and three measured runs, under a 4 GiB memory limit per run and a 4 GiB disk
+  budget. It reports where Spark overtakes pandas and where pandas runs out of memory.
 - **Dashboard.** A Streamlit page on `127.0.0.1:8501`, connected as the read-only role. It
   shows, for a date range and a set of cities:
   - headline KPIs;
@@ -88,10 +92,11 @@ flowchart LR
 | Processing | Plain Python (standard library) | Validation, dispositions and GPS rules, record by record |
 | File storage | PyArrow | Parquet I/O for the cleaned and lake layers, partitioned by date |
 | Object storage | SeaweedFS 4.48 (S3-compatible) + boto3 | Raw, cleaned and aggregated Parquet lake through the S3 API |
+| Benchmark engines | pandas 3.0 and PySpark 4.2 (local mode, Java 21) | `make benchmark`: the same cleaning workload in both, with measured runtime, memory and disk |
 | Database | PostgreSQL 18.6 (`postgres:18.6-trixie`) | `raw` / `staging` / `analytics` / `audit` schemas |
 | Driver | psycopg 3 | Parameterised SQL, `COPY` bulk loads |
 | Configuration | python-dotenv | Settings and passwords from a git-ignored `.env` |
-| Dashboard | Streamlit 1.64 (built-in charts) | `make dashboard`; pandas, Altair and PyArrow 25 arrive only as Streamlit's dependencies, and the pipeline itself does not use pandas |
+| Dashboard | Streamlit 1.64 (built-in charts) | `make dashboard`; uses pandas, Altair and PyArrow 25. The production pipeline uses plain Python and PyArrow; the benchmark uses pandas directly |
 | Orchestration | Apache Airflow 3.3.2 (LocalExecutor) | `delivery_pipeline` DAG: retries, timeouts, quality gate, catchup over the batch windows |
 | Containers | Docker Compose (`core` profile; `airflow` and `s3` profiles in their own files) | PostgreSQL, Airflow and the object store, bound to `127.0.0.1`, with a memory limit per container |
 | Testing | pytest, pytest-cov | Unit and integration suites, coverage |
@@ -140,21 +145,25 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 | Injected defect cases in the manifest | 4,395 |
 | Row reconciliation against the manifest (`make reconcile-db`) | passed: 4,395 cases; input = accepted + rejected + duplicate + stale_ignored + pending for every source and batch |
 | Defect detection by the quality checks (`make quality-report`) | 25 / 25 case types detected; observed = manifest count in every batch |
-| Full load with the quality gate (`/usr/bin/time -l make load`) | 113.49 s; max RSS 618,299,392 bytes |
-| Quality checks inside the load | 16.50 / 21.31 / 22.43 s per batch; 0 blocking failures |
+| Full load with the quality gate (`make load`) | 121.88 s for 3 batches |
+| Quality checks inside the load | 17.81 / 21.01 / 27.18 s per batch; 0 blocking failures. Of that, ~1.9 s per batch is the `ANALYZE` that gives the planner statistics for the batch's uncommitted rows |
 | Whole-database quality run (`make quality`) | 50 checks, 0 blocking failures, 0 warnings, 54.99 s |
 | Reloading the same batches | no-op; row counts identical before and after |
 | Incremental metric refresh vs full rebuild | identical row counts (`make metrics`) |
 | Index tuning, `order_event_summary` (median of 3) | 72.487 ms to 25.323 ms ([benchmarks](docs/benchmarks.md)) |
 | Dashboard queries as the read-only role (`make dashboard-check`) | 7 queries in 0.10 s on the full dataset; max RSS 76,120,064 bytes |
-| Tests | 405 unit (no services, 8.74 s), 150 integration (105.92 s) and 3 against the live object store (8.21 s) |
-| Coverage of `src/` (`make coverage`) | 77 % unit only; 85.92 % combined unit + integration, with no exclusions |
-| Lake export (`make lake-export`) | 118 objects, 1,093,033 rows, 57,501,391 bytes in 9.02 s; a replay rewrites the same objects and deletes nothing |
+| Tests (2026-10-15) | 470 unit (10.97 s), 155 integration (155.56 s), 5 Spark equivalence (18.27 s); earlier live object-store check: 3 passed (2026-10-14, 8.21 s) |
+| Coverage of `src/` (`make coverage`, 2026-10-15) | 75 % unit only; 83.35 % combined unit + integration, with no exclusions |
+| Lake export (`make lake-export`) | 118 objects, 1,093,033 rows, 57,501,391 bytes in 8.20 s; a replay rewrites the same objects and deletes nothing. Streaming the objects cut the peak memory from 923,090,944 to 653,492,224 bytes |
+| Database size by schema (`make db-sizes`) | 686.9 MiB of project tables: raw 218.7, staging 214.9, audit 174.8, analytics 78.6 MiB |
 | Lake read-back (`make lake-check`) | raw 541,536 rows, cleaned 539,047, aggregated 12,450; every key, row count and byte matches its source |
 | Airflow DAG parse (`make airflow-dag-check`) | `delivery_pipeline` parses; 5 tasks in order; schedule = the 3 batch windows; retries, backoff, timeouts and callbacks set |
 | Airflow DAG run (rerun of the last batch window from the UI) | all 5 tasks succeeded in 2 min 2 s; business-table row counts unchanged |
 | Memory, PostgreSQL + Airflow (`make airflow-stats`) | about 1.0-1.1 GiB idle; peak 2.12-2.26 GiB during a DAG run (two runs) |
 | Airflow image (`make airflow-image-info`) | 3,821,003,600 bytes, of which 3,252,573,702 are the official base image |
+| pandas vs PySpark crossover (`make benchmark`) | about 1,000,000 orders: pandas 43.374 s against Spark 40.919 s. Below it pandas leads (6.6x at 50,000, 1.6x at 500,000); at 2,000,000 only Spark finishes, in 63.169 s |
+| Memory at scale, same workload | pandas 530.5 MiB at 50,000 orders up to 4,024.3 MiB at 1,000,000, then killed by the 4 GiB limit at 2,000,000; Spark peaks at 1.33-2.60 GiB and spills up to 1.71 GiB to disk |
+| Partitioned vs single-file Parquet read (one week of 21 days, 5,882,587 rows) | no gain: pandas 0.851 s single against 1.28 s partitioned, Spark 8.473 s against 8.442 s ([why](docs/benchmarks.md)) |
 
 ## Data quality
 
@@ -184,7 +193,10 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 - **Object store tests** (`make test-s3`, marker `s3`), against PostgreSQL and the live store,
   in a throw-away prefix: export, read-back check and replay; the pipeline key cannot create
   buckets or write to another bucket.
-- **Attribution.** Every test carries exactly one of the three markers; collection stops
+- **Benchmark engine tests** (`make test-spark`, marker `spark`), needing only a Java 21
+  runtime: the pandas and the PySpark engine must return identical counts and aggregates on the
+  fixture dataset, on several shards, and on both read layouts.
+- **Attribution.** Every test carries exactly one of the four markers; collection stops
   otherwise, so a failure always belongs to one suite.
 
 ## Continuous integration
@@ -195,8 +207,8 @@ PostgreSQL, Airflow and SeaweedFS images to their digests.
 
 | Workflow | Jobs |
 |---|---|
-| [`tests.yml`](.github/workflows/tests.yml) | Lint and type check (+ workflow validation); unit tests with no services; integration tests and the 80 % coverage gate against PostgreSQL started by `make up` with passwords generated in the job; Airflow DAG parse check; object store tests against SeaweedFS started by `make s3-up` with keys generated in the job; determinism check (`make generate-check`) on Linux |
-| [`security.yml`](.github/workflows/security.yml) (also weekly) | gitleaks on the working tree and the full git history; pip-audit on every locked package; bandit on `src/`; Trivy on the repository (gating) and on the PostgreSQL, Airflow and SeaweedFS images (report only) |
+| [`tests.yml`](.github/workflows/tests.yml) | Lint and type check (+ workflow validation); unit tests with no services; integration tests and the 80 % coverage gate against PostgreSQL started by `make up` with passwords generated in the job; Airflow DAG parse check; object store tests against SeaweedFS started by `make s3-up` with keys generated in the job; pandas/PySpark equivalence tests on the runner's Java 21; determinism check (`make generate-check`) on Linux |
+| [`security.yml`](.github/workflows/security.yml) (also weekly) | gitleaks on the working tree and the full git history; pip-audit on every locked package; bandit on `src/` and the Python files in `scripts/`; Trivy on the repository (gating) and on the PostgreSQL, Airflow and SeaweedFS images (report only) |
 
 CI generates its own small dataset; no data is committed. Dependabot proposes weekly updates for
 the actions, the Python lockfile, the Compose images and the Airflow Dockerfile. Security reports: [SECURITY.md](SECURITY.md).
@@ -221,13 +233,14 @@ the actions, the Python lockfile, the Compose images and the Airflow Dockerfile.
 │   ├── database/          idempotent loader, metrics refresh, analytics runner
 │   ├── orchestration/     batch windows and the command of each DAG task
 │   ├── lake/              S3 lake: bucket bootstrap, layer export, read-back reconciliation
+│   ├── bench/             benchmark workload: shards, pandas and PySpark engines, disk guard
 │   ├── quality/           data-quality checks and the quality gate
 │   ├── dashboard/         Streamlit dashboard (read-only role) and its data access
 │   └── groundtruth/       manifest verification and reconciliation (tests and reports only)
 ├── tests/
 │   ├── unit/              no services
 │   └── integration/       needs PostgreSQL (test_lake_live.py: also the object store)
-├── scripts/               shell helpers used by make targets
+├── scripts/               shell helpers used by make targets, and the benchmark harness
 └── docs/                  contracts, data model, operations, benchmarks, quality report
 ```
 
@@ -241,12 +254,15 @@ Further reading: [data contracts](docs/data_contracts.md) ·
   in this repository yet.
 - **The lake is local and write-only for the pipeline.** It runs on a local SeaweedFS store;
   real AWS S3 is a settings change but has not been used. No pipeline stage reads the lake yet;
-  `make lake-check` reads it back to prove it matches its sources. The export builds the whole
-  lake in memory first (peak 923 MB for the default dataset), and SeaweedFS reached 403 MiB
+  `make lake-check` reads it back to prove it matches its sources. The export streams one object
+  at a time (peak 653,492,224 bytes for the default dataset); one batch's records still fit in
+  memory. SeaweedFS reached 403 MiB
   after two exports (its limit is 768 MiB).
-- **The quality gate roughly doubles the load time** (about 60 s of 113.49 s).
-  - The checks run with nested-loop joins disabled, because the batch's uncommitted rows have
-    no planner statistics.
+- **The quality gate roughly doubles the load time** (about 66 s of 121.88 s).
+  - The checks analyze the tables they read first, so the planner knows the batch's uncommitted
+    rows. That replaced an earlier planner override (nested-loop joins disabled) and is the
+    correct fix, but it did not make the load faster: the `ANALYZE` itself costs about 1.9 s per
+    batch, roughly what the override had saved.
   - Cross-batch raw checks read all earlier batches, so their cost grows with history.
 - **The database is about 8× the raw input** (686 MB for 87 MB of raw files). The audit trail
   keeps one disposition row per input row.
@@ -264,6 +280,13 @@ Further reading: [data contracts](docs/data_contracts.md) ·
 - **Airflow is heavy for a laptop.** PostgreSQL plus Airflow peak at 2.12-2.26 GiB during a run,
   and the image is 3.8 GB, mostly the official Airflow base image. The Airflow UI uses the
   development-only simple auth manager with a generated password, bound to `127.0.0.1`.
-- **Coverage.** Unit-only coverage is 77 %. The command-line entry points and report writers
-  are exercised by `make` targets rather than by pytest, and the object store tests are not
-  counted in the coverage figure.
+- **The benchmark workload is not the pipeline.** `make benchmark` runs a defined vectorised
+  subset of the cleaning rules in pandas and in PySpark, proved identical **to each other**, not
+  to the production engine, which keeps its stateful disposition logic in plain Python. The
+  benchmark answers where Spark overtakes pandas, not whether the pipeline is correct.
+- **Spark is not part of the pipeline.** It is an extra dependency group and needs Java 21; no
+  pipeline command uses it. 5,000,000 orders was not benchmarked because it would exceed the
+  4 GiB disk budget the benchmark holds itself to.
+- **Coverage.** Unit-only coverage is 75 %. The command-line entry points and report writers
+  are exercised by `make` targets rather than by pytest, and the object store and Spark suites
+  are not counted in the coverage figure.

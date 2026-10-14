@@ -229,12 +229,24 @@ Needs `make up`. Check catalogue and rules: `docs/data_contracts.md` section 11.
    tolerance was wrong.
 3. Run `make load` again. The batch is retried as the next attempt.
 
-**Why nested-loop joins are off during the checks.** In a load the checks read the batch's
-uncommitted rows. PostgreSQL has no statistics for them, so it estimates about one row, and a
-nested-loop plan becomes quadratic. Measured before the fix: `raw_parent_after_children` took
-35 s instead of 0.4 s. The suite therefore runs with `SET LOCAL enable_nestloop = off`, restored
-right after. `ANALYZE` inside the transaction would also work, but the ETL role does not own the
-tables (by design: see "Roles" below).
+**Why the checks analyze their tables first.** In a load the checks read the batch's uncommitted
+rows. Without fresh statistics PostgreSQL estimates them as about one row and picks a nested-loop
+plan that becomes quadratic (measured: `raw_parent_after_children` 35 s instead of 0.4 s). The
+suite therefore calls `staging.analyze_quality_tables()` before the checks. `ANALYZE` in the same
+transaction counts the uncommitted rows, so the planner's estimate is right.
+
+- Only a table's owner (or a role with `MAINTAIN`) may run `ANALYZE`, and the ETL role is
+  deliberately neither. The function is therefore owned by `deliverypulse_owner`, declared
+  `SECURITY DEFINER` with `SET search_path = pg_catalog`, and analyzes a **fixed list** of the 14
+  tables the checks read. `EXECUTE` is revoked from `PUBLIC` and granted to `deliverypulse_etl`
+  alone, so the ETL role gains nothing else: `tests/integration/test_roles.py` asserts it holds
+  no `MAINTAIN` on any table and may execute no other function in the project schemas.
+- It replaced an earlier `SET LOCAL enable_nestloop = off`. **It did not make the load faster:**
+  per-batch quality time went from 16.50 / 21.31 / 22.43 s to 17.81 / 21.01 / 27.18 s, and the
+  `ANALYZE` itself costs about 1.9 s per batch on the full dataset. The gain is correctness: the
+  planner now works from real statistics instead of being forbidden one join type.
+- `tests/integration/test_planner_statistics.py` measures the effect: the estimate for 2,000
+  uncommitted rows is 1 before the call and 2,000 after.
 
 **A database created before the quality framework** (without the two quality audit tables and
 the two `pipeline_runs` window columns) needs the reset procedure once: `make reset-db` (type `DELETE`), `make up`, `make load`.
@@ -478,6 +490,49 @@ found for STS service`. It concerns its optional STS (temporary credentials) ser
 identity file is loaded: the admin key creates the bucket, and the live tests prove the pipeline
 key's limits.
 
+## Scale benchmark (pandas vs PySpark)
+
+Needs the `bench` dependency group (`uv sync --locked --group bench`) and a **Java 21** runtime
+for PySpark. The benchmark is separate from the ETL: it never touches the database, the object
+store or `data/raw`. Methodology and results: `docs/benchmarks.md`, section 2.
+
+| Command | What it does |
+|---|---|
+| `make bench-data SHARDS=n` | Builds n benchmark shards of 50,000 orders under `data/bench/shards/`, one at a time, deleting each shard's raw files after converting it to Parquet |
+| `make benchmark` | The whole benchmark up to `BENCH_LARGEST` (default `2m`), `BENCH_RUNS` measured runs each (default 3); writes `docs/benchmarks/scale-<date>.json` and the generated section of `docs/benchmarks.md` |
+| `make test-spark` | The pandas/Spark equivalence tests (marker `spark`); no database and no object store |
+| `make bench-clean` | **Deletes** `data/bench/` after you type `DELETE` (shards, read copies, Spark scratch space) |
+
+**Java 21.** Every benchmark target resolves `JAVA_HOME` with `/usr/libexec/java_home -v 21` and
+stops with an install hint when it is missing. Java 22 or another version is never used silently.
+Install it with `brew install --cask temurin@21`.
+
+**Disk budget.** Everything the benchmark writes lives under `data/bench/`: the shards, the read
+copies, Spark's `spark.local.dir` (`data/bench/spark-local`) and the temporary files
+(`data/bench/tmp`, also used as `TMPDIR` and `java.io.tmpdir`). Their total must stay within
+4 GiB; the code refuses a larger budget, so raising it needs a code change. At least 10 GiB must
+remain free on `/` and on the volume of `data/`. Before each size and each shard the harness
+projects the size from measured per-shard sizes and stops cleanly rather than creating data that
+would not fit; during a run the usage is checked every second. Spark's scratch space and the
+temporary files are deleted after every run, including after a failure.
+
+**Memory limit.** Each run is one process; the resident memory of its whole process tree (Python
+plus the Spark JVM) is sampled every 0.2 s. A run above 4 GiB is killed and recorded as stopped,
+and that engine is not attempted at larger sizes; the other engine continues. This keeps the
+benchmark within an 8 GB laptop.
+
+**Privacy.** The JSON and the report record the hardware model, core count, RAM, OS version,
+Python, JDK and package versions only: no hostname, user name or absolute path. Error messages
+have the project and home paths removed.
+
+Typical run (the first call builds the shards, which takes the longest):
+
+```bash
+make benchmark                      # up to 2M orders, 3 runs each
+make benchmark BENCH_LARGEST=250k   # a quick check
+make bench-clean                    # frees data/bench again
+```
+
 ## Continuous integration and security scanning
 
 Two GitHub Actions workflows run on every push to `main` and every pull request; `security.yml`
@@ -485,11 +540,12 @@ also runs weekly. Both have `permissions: contents: read` and use no repository 
 
 | Workflow | Job | What it runs |
 |---|---|---|
-| `tests.yml` | Lint and type check | `uv sync --locked`, `make lint`, `make actionlint` |
+| `tests.yml` | Lint and type check | `uv sync --locked --group bench`, `make lint` (ruff, mypy over `src`, `tests` and `scripts/*.py`), `make actionlint` |
 | | Unit tests (no services) | `make test` |
 | | Integration tests and coverage (PostgreSQL) | `.env` with generated, masked passwords; `make up`; `make test-integration`; `make coverage`; container logs on failure; `make down` |
 | | Airflow DAG parse check | `.env` with generated, masked passwords; `make airflow-dag-check` |
 | | Object store tests | `.env` with generated, masked passwords and keys; `make up`; `make s3-up`; `make test-s3`; logs on failure; `make s3-down`, `make down` |
+| | Benchmark engines | `uv sync --locked --group bench`; the pandas/Spark equivalence tests with the runner's Java 21 |
 | | Determinism check (Linux) | `make generate-check ORDERS=1500 SEED=7` |
 | `security.yml` | Secret scan (gitleaks) | `make scan` (working tree), then `gitleaks git` over the full history |
 | | Dependency audit | `make audit` |
@@ -501,7 +557,7 @@ Local equivalents (all through `uv run`):
 | Command | What it does |
 |---|---|
 | `make audit` | `scripts/pip_audit.sh`: exports the hash-pinned packages from `uv.lock` and runs `pip-audit --strict` on them (the uv environment has no pip) |
-| `make bandit` | `bandit -r src` |
+| `make bandit` | `bandit -r src scripts/airflow_dag_check.py scripts/benchmark.py`: the Python files outside `src/` are scanned too, so moving code out of `src/` never leaves it unscanned. No `nosec` marker is used anywhere |
 | `make actionlint` | `actionlint` on `.github/workflows/`, plus a YAML parse of `.github/dependabot.yml` |
 
 **Why CI starts PostgreSQL with `make up`, not a `services:` container.**

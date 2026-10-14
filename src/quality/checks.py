@@ -672,17 +672,14 @@ def run_checks(
 ) -> list[CheckResult]:
     """Run ``checks`` (default: all) over ``scope``.
 
-    Nested-loop joins are disabled while the checks run (``SET LOCAL``, restored afterwards).
-    During a load the batch's rows are uncommitted, so the planner has no statistics for them
-    and underestimates them as about one row. A nested loop then becomes quadratic (measured:
-    raw_parent_after_children 35 s instead of 0.4 s). Hash and merge joins do not depend on
-    those estimates. The ETL role cannot ANALYZE (it does not own the tables), by design.
+    The tables the checks read are analyzed first (``staging.analyze_quality_tables()``, owned
+    by deliverypulse_owner; the ETL role may only execute it). During a load the batch's rows
+    are uncommitted; ANALYZE in the same transaction counts them, so the planner no longer
+    underestimates them as about one row and does not choose quadratic nested loops. This
+    replaces the earlier ``SET LOCAL enable_nestloop = off``.
     """
-    cur.execute("SET LOCAL enable_nestloop = off")
-    try:
-        return [result for check in checks for result in run_check(cur, check, scope, config)]
-    finally:
-        cur.execute("SET LOCAL enable_nestloop = on")
+    cur.execute("SELECT staging.analyze_quality_tables()")
+    return [result for check in checks for result in run_check(cur, check, scope, config)]
 
 
 def run_quality(
