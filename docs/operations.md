@@ -33,9 +33,11 @@ cp .env.example .env    # local settings; .env is git-ignored
 uv run python -c "import sys; print(sys.executable, sys.version)"   # must show .venv/ and 3.12.10
 ```
 
-Then replace every `CHANGE_ME` in `.env` with a real local password
-(`POSTGRES_SUPERUSER_PASSWORD`, `DELIVERYPULSE_ETL_PASSWORD`, `DELIVERYPULSE_READONLY_PASSWORD`)
-**before the first `make up`**. The init script refuses to initialise with placeholder values.
+Then replace every `CHANGE_ME` in `.env` with real local values. The core profile needs
+`POSTGRES_SUPERUSER_PASSWORD`, `DELIVERYPULSE_ETL_PASSWORD` and
+`DELIVERYPULSE_READONLY_PASSWORD` **before the first `make up`**. The Airflow profile also needs
+`AIRFLOW_DB_PASSWORD`, `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET` and a numeric `AIRFLOW_UID`
+before `make airflow-build`, `make airflow-up` or `make airflow-dag-check`.
 
 ## Everyday commands
 
@@ -46,16 +48,16 @@ Then replace every `CHANGE_ME` in `.env` with a real local password
 | `make test` | Unit tests only (`pytest -m unit`); needs no services and no `.env` |
 | `make test-integration` | Integration tests (`pytest -m integration`); needs `make up` first. Fails (never skips) if PostgreSQL is unreachable |
 | `make coverage` | Unit-only coverage of `src/`, then combined unit + integration coverage with missing lines; fails below `COVERAGE_MIN` (default 80 %). Needs `make up` |
-
-Every test carries exactly one marker, `unit` or `integration` (collection stops otherwise), and
-unit tests cannot open a database connection (they fail with "unit tests must not connect to a
-database"). So a failure in `make test` is always a unit failure, never a missing service.
 | `make scan` | `gitleaks dir .` with `.gitleaks.toml`; fails (non-zero) on any finding |
 | `make scan-selftest` | Proves gitleaks detects a synthetic secret in a scratch dir outside the project |
 | `make up` | Starts the `core` profile and waits (up to 120 s) until PostgreSQL is healthy |
 | `make down` | Stops and removes the containers. **Keeps** the `deliverypulse_pgdata` volume |
 | `make db-status` | Prints `PGDATA`, server version, `system_identifier`, timezone and project schemas |
 | `make reset-db` | **Deletes all database data** after you type `DELETE` (see below) |
+
+Every test carries exactly one marker, `unit` or `integration` (collection stops otherwise), and
+unit tests cannot open a database connection (they fail with "unit tests must not connect to a
+database"). So a failure in `make test` is always a unit failure, never a missing service.
 
 ## Synthetic data
 
@@ -261,6 +263,113 @@ Needs `make up` and a loaded database.
   (`st.cache_data`), so a reload within a minute does not query the database again.
 - **pandas** is installed only as a Streamlit dependency; the pipeline does not use it.
 
+## Airflow orchestration
+
+Needs the `core` and `airflow` Compose profiles. Airflow is kept in
+`docker-compose.airflow.yml`, layered on top of `docker-compose.yml`, so the core pipeline still
+runs and tests without any `AIRFLOW_` variables.
+
+**Two-file layout.** This is how the "`airflow` Compose profile" deliverable is implemented:
+every Airflow service carries `profiles: ["airflow"]`, but the services live in their own file.
+- Compose interpolates every variable of every file it loads, even for services of inactive
+  profiles. With Airflow in `docker-compose.yml`, plain `make up` would fail without the
+  `AIRFLOW_` variables.
+- The `make airflow-*` targets run
+  `docker compose -f docker-compose.yml -f docker-compose.airflow.yml --profile core --profile airflow`.
+  The core targets load `docker-compose.yml` only.
+- `docker-compose.airflow.yml` requires all four variables with `${VAR:?}`, and
+  `scripts/airflow_env_check.sh` additionally rejects the `CHANGE_ME` placeholders before
+  `make airflow-build` and `make airflow-up`, without printing any value.
+- Proven twice: a unit test checks that `docker-compose.yml` contains no `AIRFLOW_` text, and the
+  CI integration job runs `make up` with a `.env` from which every `AIRFLOW_` line was removed.
+
+| Container | `mem_limit` | Role |
+|---|---|---|
+| `airflow-db` | 512 MiB | Airflow's own metadata database (PostgreSQL, no published port) |
+| `airflow-init` | 1 GiB | One-shot `airflow db migrate`, then exits |
+| `airflow-api-server` | 1 GiB | UI and API on `127.0.0.1:8080` |
+| `airflow-scheduler` | 2 GiB | Scheduler; with LocalExecutor it also runs the tasks, so its limit covers the largest task (`clean`, about 1 GiB) |
+| `airflow-dag-processor` | 768 MiB | Parses the DAG files |
+| `airflow-dag-check` | 1 GiB | One-shot parse check (`make airflow-dag-check`), no network |
+
+**Image size** (`make airflow-image-info`, 2026-10-14): `deliverypulse-airflow:3.3.2` is
+3,821,003,600 bytes, of which the official base image is 3,252,573,702 bytes; the project venv
+adds 381M. Streamlit and its dependencies (about 130 MB: pandas, streamlit, pydeck, pillow,
+altair) are installed too, although no DAG task uses them. They are kept, because moving them to
+a separate dependency group would change the dependency layout for a small share of an image that
+is about 85 % base image.
+
+**Runtime files.** Task logs (including the quality gate's JSON output,
+`/opt/airflow/logs/deliverypulse/quality-latest.json`) live in the named volume
+`deliverypulse_airflow_logs`; the generated admin password in `deliverypulse_airflow_auth`;
+Airflow's metadata in `deliverypulse_airflow_db`. The only project path the containers write is
+`./data` (git-ignored); `dags/`, `src/` and `sql/` are mounted read-only.
+
+| Command | What it does |
+|---|---|
+| `make airflow-dag-check` | Parses and verifies `delivery_pipeline` inside the pinned Airflow image, without a metadata database or network |
+| `make airflow-build` | Builds `deliverypulse-airflow:3.3.2` from the pinned Airflow base image plus the project's locked runtime dependencies |
+| `make airflow-up` | Starts PostgreSQL plus Airflow on `http://127.0.0.1:8080` and waits until all services are healthy |
+| `make airflow-password` | Prints the generated local admin password from the Airflow auth volume |
+| `make airflow-runs` | Lists `delivery_pipeline` runs with state, start and end |
+| `make airflow-stats` | Prints one-shot memory and CPU stats for the running DeliveryPulse containers |
+| `make airflow-image-info` | Prints the Airflow image size and the largest packages in the project venv inside the image |
+| `make airflow-down` | Stops core + Airflow containers and keeps every volume |
+| `make airflow-reset` | Deletes only Airflow metadata, logs and generated admin password after you type `DELETE`; it does not delete `deliverypulse_pgdata` or `data/` |
+
+### Startup and UI access
+
+1. Put real local values in `.env` for all `AIRFLOW_` variables. Generate the Fernet key as
+   32 URL-safe base64 bytes, and use a long random value for `AIRFLOW_JWT_SECRET`.
+2. Run `make airflow-build`.
+3. Run `make airflow-up`.
+4. Run `make airflow-password` in your terminal. The username is `admin`.
+5. Open `http://127.0.0.1:8080` and sign in. The UI is localhost-only.
+
+The DAG is paused at creation (`AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True`). Example DAGs
+are disabled. Runtime task logs and the generated admin password live in named Docker volumes,
+not in the project directory.
+
+### Triggering and checking a DAG run
+
+The DAG id is `delivery_pipeline`. It has five tasks:
+`generate -> clean -> load -> quality_gate -> refresh_aggregates`.
+
+The schedule is one weekly run per generated batch window. `catchup=True`, `max_active_runs=1`
+and `load.depends_on_past=True` make backfills run oldest first. Run 1 loads through batch 1,
+run 2 through batch 2 and run 3 through batch 3. Clearing or rerunning a date is expected to be
+idempotent: generation is a no-op for an unchanged dataset, cleaning rebuilds derived output,
+the loader skips already-succeeded batch ids, the quality gate records a read-only manual check,
+and aggregate refresh recomputes deterministically.
+
+To demonstrate the normal path through the UI:
+1. In Airflow, unpause `delivery_pipeline`.
+2. Let the three scheduled catchup runs complete, or trigger the DAG from the UI.
+3. Confirm each task is green for the run you are checking.
+4. Run `make airflow-runs` to capture the run table for the project notes.
+
+To demonstrate a quality-gate block:
+1. Start from a database that has successfully loaded data.
+2. Run `make quality-demo-plant` to insert one synthetic bad order.
+3. In the Airflow UI, clear and rerun a date whose `load` task will be skipped as already loaded,
+   so `quality_gate` runs against the planted bad row.
+4. Confirm `quality_gate` fails and `refresh_aggregates` is not run.
+5. Run `make quality-demo-remove` to remove the synthetic bad row, then rerun the date if you
+   want the cleared DAG run to return to green.
+
+To demonstrate rerun idempotency:
+1. Capture business-table counts or digests before the rerun. `make db-counts` is a quick count
+   check; the integration suite has stronger digest tests.
+2. In the Airflow UI, clear a completed date and rerun it.
+3. Confirm the rerun succeeds and `make db-counts` shows no duplicate business rows.
+
+### Cleanup and reset boundaries
+
+Use `make airflow-down` to stop services while keeping data. Use `make airflow-reset` only when
+you want to delete Airflow run history, task logs and the generated admin password. It does not
+reset the pipeline database. Database resets are still done only with `make reset-db`, which
+prints a data-loss warning and requires typed confirmation.
+
 ## Continuous integration and security scanning
 
 Two GitHub Actions workflows run on every push to `main` and every pull request; `security.yml`
@@ -271,11 +380,12 @@ also runs weekly. Both have `permissions: contents: read` and use no repository 
 | `tests.yml` | Lint and type check | `uv sync --locked`, `make lint`, `make actionlint` |
 | | Unit tests (no services) | `make test` |
 | | Integration tests and coverage (PostgreSQL) | `.env` with generated, masked passwords; `make up`; `make test-integration`; `make coverage`; container logs on failure; `make down` |
+| | Airflow DAG parse check | `.env` with generated, masked passwords; `make airflow-dag-check` |
 | | Determinism check (Linux) | `make generate-check ORDERS=1500 SEED=7` |
 | `security.yml` | Secret scan (gitleaks) | `make scan` (working tree), then `gitleaks git` over the full history |
 | | Dependency audit | `make audit` |
 | | Static analysis | `make bandit` |
-| | Trivy | `trivy fs` on the repository (fails on fixable HIGH/CRITICAL); `trivy image` on the pinned PostgreSQL image (report only, exit code 0) |
+| | Trivy | `trivy fs` on the repository (fails on fixable HIGH/CRITICAL); `trivy image` on the pinned PostgreSQL and Airflow images (report only, exit code 0) |
 
 Local equivalents (all through `uv run`):
 
@@ -302,10 +412,13 @@ Local equivalents (all through `uv run`):
 | `aquasecurity/trivy-action` v0.36.0 (annotated tag) | `security.yml` | `git ls-remote https://github.com/aquasecurity/trivy-action 'refs/tags/v0.36.0^{}'`: the peeled commit is the pinned SHA |
 | gitleaks 8.30.1 binary | `security.yml` (`GITLEAKS_SHA256`) | The `gitleaks_8.30.1_linux_x64.tar.gz` line of the release's `gitleaks_8.30.1_checksums.txt` |
 | `postgres:18.6-trixie` digest | `tests.yml`, `security.yml` | `docker buildx imagetools inspect postgres:18.6-trixie`: the top-level `Digest:` (the multi-architecture index) |
+| `apache/airflow:3.3.2-python3.12` digest `sha256:9df9c8be4096b9cc626bd7cb1f2b8c712eef66c59c615f8c7e6200871ca10bd1` | `docker/airflow/Dockerfile`, `docker-compose.airflow.yml` (`airflow-dag-check`), `Makefile` (`AIRFLOW_BASE_IMAGE`), `security.yml` | `docker buildx imagetools inspect apache/airflow:3.3.2-python3.12`: the top-level `Digest:` |
+| `ghcr.io/astral-sh/uv:0.13.0` digest `sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168` | `docker/airflow/Dockerfile` (copies the `uv` binary) | `docker buildx imagetools inspect ghcr.io/astral-sh/uv:0.13.0`: the top-level `Digest:` |
 
 Every pin fails safe: a wrong SHA, checksum or digest stops the job rather than running
-something unverified. Dependabot proposes updates for the action pins, `uv.lock` and the
-Compose tag. When the Compose tag changes, update the image digest in both workflows by hand.
+something unverified. Dependabot proposes updates for the action pins, `uv.lock`, the Compose
+tag and the two `FROM` lines of the Airflow Dockerfile. When a tag changes, update every
+listed copy of its digest by hand.
 
 ## PostgreSQL (core profile)
 
@@ -369,6 +482,24 @@ removes it if so, and reports clearly if it did not exist. Aborting (any answer 
 | Profile | Services | Approximate RAM | Hard limit |
 |---|---|---|---|
 | `core` | PostgreSQL | ~50-150 MiB idle; up to a few hundred MiB under analytical queries with default settings (`shared_buffers` 128 MB) | 1 GiB (`mem_limit`) |
+| `core` + `airflow` | PostgreSQL, airflow-db, api-server, scheduler, dag-processor | Measured 2026-10-14: about 1.0-1.1 GiB idle; peak 2.12-2.26 GiB during a full DAG run | sum of limits 5.25 GiB (per-container limits in "Airflow orchestration") |
+
+**Airflow, measured 2026-10-14** (`make airflow-stats`, sampled every few seconds while the last
+batch window was cleared and rerun from the UI; all five tasks, 2 min 2 s):
+
+| Container | Idle | Peak during the run | Limit |
+|---|---|---|---|
+| `airflow-scheduler` (runs the tasks) | 531.4 MiB | 1,581.1 MiB | 2 GiB |
+| `airflow-api-server` | 231.9 MiB | 294.5 MiB | 1 GiB |
+| `airflow-dag-processor` | 173.1 MiB | 253.4 MiB | 768 MiB |
+| `airflow-db` | 38.22 MiB | 59.7 MiB | 512 MiB |
+| `postgres` | 69.9 MiB (just restarted) | 207.6 MiB | 1 GiB |
+| **Total** | **about 1.02 GiB** | **2,172.6 MiB (2.12 GiB)**, highest single sample | |
+
+The per-container peaks happened at different moments, so they add up to more than the highest
+total sample. At the highest total sample the scheduler was at 1.544 GiB, 77 % of its 2 GiB
+limit. An earlier rerun of the same window the same day peaked at 2,310.0 MiB (2.26 GiB) in
+total, scheduler 1,625.1 MiB.
 
 These are estimates. Measure on your machine with
 `docker stats --no-stream deliverypulse-postgres-1`. Measured after a full load of the default

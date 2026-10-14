@@ -784,13 +784,26 @@ def load_dataset(
     dataset_dir: Path,
     config: TransformConfig,
     quality_config: QualityConfig | None = None,
+    through_batch: int | None = None,
 ) -> list[BatchLoad]:
-    """Load every batch of ``dataset_dir`` in sequence; already-loaded batches are skipped."""
+    """Load the batches of ``dataset_dir`` in sequence; already-loaded batches are skipped.
+
+    ``through_batch`` limits the load to batches 1..N (the orchestrator loads one more batch per
+    scheduled run); None loads every batch. N outside 1..(number of batches) is refused before
+    anything is written.
+    """
     if not conn.autocommit:
         raise LoadError("the load needs a connection in autocommit mode")
     folders = batch_folders(dataset_dir)
     if not folders:
         raise LoadError(f"No batch folders in {dataset_dir}.")
+    if through_batch is not None:
+        if not 1 <= through_batch <= len(folders):
+            raise LoadError(
+                f"--through-batch {through_batch} is outside 1..{len(folders)} "
+                f"(the batches in {dataset_dir.name})"
+            )
+        folders = folders[:through_batch]
     row = conn.execute("SELECT pg_try_advisory_lock(%s)", (LOAD_LOCK_KEY,)).fetchone()
     if row is None or not row[0]:
         raise LoadError("another load is running against this database")
@@ -801,6 +814,17 @@ def load_dataset(
         ]
     finally:
         conn.execute("SELECT pg_advisory_unlock(%s)", (LOAD_LOCK_KEY,))
+
+
+def positive_int(text: str) -> int:
+    """argparse type: a whole number of at least 1."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{value} must be at least 1")
+    return value
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -819,6 +843,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="CHECK=VALUE",
         help="override a quality-check threshold (repeatable), e.g. raw_duplicate_rows=0.05",
     )
+    parser.add_argument(
+        "--through-batch",
+        type=positive_int,
+        default=None,
+        metavar="N",
+        help="load batches 1..N only (default: every batch)",
+    )
     args = parser.parse_args(argv)
     configure_logging()
     raw_dir: Path = args.raw_dir
@@ -834,7 +865,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings = load_database_settings("etl")
         with psycopg.connect(settings.conninfo(), autocommit=True) as conn:
             logger.info("loading dataset %s as %s", dataset_dir.name, settings.user)
-            loads = load_dataset(conn, dataset_dir, config, quality_config)
+            loads = load_dataset(
+                conn, dataset_dir, config, quality_config, through_batch=args.through_batch
+            )
     except (
         TransformError,
         ConfigError,

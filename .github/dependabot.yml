@@ -1,6 +1,6 @@
-# Weekly dependency updates: GitHub Actions (SHA pins), Python (uv.lock) and the Compose image.
-# The digest-pinned PostgreSQL image in the workflows is updated by hand when the Compose tag
-# changes (see docs/operations.md, "Updating pins").
+# Weekly dependency updates: GitHub Actions (SHA pins), Python (uv.lock), the Compose images and
+# the Airflow Dockerfile. The digest pins repeated in the workflows and in
+# docker-compose.airflow.yml are updated by hand to match (see docs/operations.md, "Updating pins").
 #
 # Cooldown: a new release is proposed only once it is at least 14 days old, which leaves time
 # for a broken or compromised release to be withdrawn before it reaches this repository.
@@ -24,6 +24,15 @@ updates:
 
   - package-ecosystem: docker-compose
     directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5
+
+  # The Airflow image's FROM lines (apache/airflow and the uv binary image, both digest-pinned).
+  - package-ecosystem: docker
+    directory: /docker/airflow
     schedule:
       interval: weekly
     cooldown:

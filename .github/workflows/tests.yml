@@ -3,7 +3,7 @@
 # Least privilege: read-only token, no repository secrets. The database passwords are generated
 # inside the integration job and masked; they never exist in the repository.
 # Every third-party action is pinned to a full commit SHA (version in the comment), and the
-# PostgreSQL image is pinned by digest. How to verify and update pins: docs/operations.md.
+# PostgreSQL and Airflow images are pinned by digest. How to verify and update pins: docs/operations.md.
 
 name: Tests
 
@@ -74,9 +74,11 @@ jobs:
           version: ${{ env.UV_VERSION }}
       - name: Install locked dependencies
         run: uv sync --locked
-      - name: Create .env with generated, masked passwords
+      - name: Create a core-only .env (no AIRFLOW_ variables) with generated, masked passwords
         run: |
-          cp .env.example .env
+          # The AIRFLOW_ lines are deleted on purpose: the next step proves the core stack starts
+          # without them (the Airflow services live in docker-compose.airflow.yml).
+          grep -v '^AIRFLOW_' .env.example > .env
           for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD; do
             value="$(openssl rand -hex 24)"
             echo "::add-mask::${value}"
@@ -86,7 +88,11 @@ jobs:
             echo "A CHANGE_ME placeholder is left in .env" >&2
             exit 1
           fi
-      - name: Start PostgreSQL (make up)
+          if grep -q '^AIRFLOW_' .env; then
+            echo "The core-only .env must not contain AIRFLOW_ variables" >&2
+            exit 1
+          fi
+      - name: Start PostgreSQL without any AIRFLOW_ variable (make up)
         run: make up
       - name: Integration tests (make test-integration)
         run: make test-integration
@@ -98,6 +104,31 @@ jobs:
       - name: Stop PostgreSQL (make down)
         if: always()
         run: make down
+
+  airflow-dag:
+    name: Airflow DAG parse check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create .env with generated, masked values
+        run: |
+          cp .env.example .env
+          for name in POSTGRES_SUPERUSER_PASSWORD DELIVERYPULSE_ETL_PASSWORD DELIVERYPULSE_READONLY_PASSWORD \
+                      AIRFLOW_DB_PASSWORD AIRFLOW_FERNET_KEY AIRFLOW_JWT_SECRET; do
+            value="$(openssl rand -hex 24)"
+            echo "::add-mask::${value}"
+            sed -i "s/^${name}=CHANGE_ME\$/${name}=${value}/" .env
+          done
+          sed -i "s/^AIRFLOW_UID=.*/AIRFLOW_UID=$(id -u)/" .env
+          if grep -q 'CHANGE_ME' .env; then
+            echo "A CHANGE_ME placeholder is left in .env" >&2
+            exit 1
+          fi
+      - name: Parse and verify the DAG in the pinned Airflow image (make airflow-dag-check)
+        run: make airflow-dag-check
 
   determinism:
     name: Determinism check (Linux)

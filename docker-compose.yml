@@ -1,5 +1,9 @@
-# DeliveryPulse services. Start only the profile you need (memory per profile: docs/operations.md):
-#   core: PostgreSQL analytics store
+# DeliveryPulse core services. Start only the profile you need (memory per profile:
+# docs/operations.md):
+#   core:    PostgreSQL analytics store (this file)
+#   airflow: Airflow 3 and its metadata database, in docker-compose.airflow.yml, which is
+#            layered on top of this file by the `make airflow-*` targets
+# This file never references an Airflow variable, so the core stack runs without them.
 # Never run several heavy profiles at once on an 8 GB machine.
 #
 # All credentials come from .env (git-ignored). `${VAR:?message}` makes Compose refuse to

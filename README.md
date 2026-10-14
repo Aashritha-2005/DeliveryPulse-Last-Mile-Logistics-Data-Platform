@@ -38,6 +38,10 @@ flowchart LR
     A --> DB["make dashboard<br/>Streamlit, read-only role"]
     GT --> REC["make reconcile-db / make quality-report<br/>tests and reports only"]
     Q --> REC
+    AF["Airflow delivery_pipeline<br/>weekly batch schedule"] -.-> G
+    AF -.-> T
+    AF -.-> L
+    AF -.-> Q
 ```
 
 - **Generate.** A seeded generator writes three weekly batches of drivers, orders, delivery
@@ -53,6 +57,11 @@ flowchart LR
 - **Quality gate.** 35 checks (50 results) run inside each batch transaction: blocking
   integrity checks, plus raw-layer detection checks that re-derive every defect independently.
   A blocking failure rolls the batch back and records the evidence.
+- **Orchestration.** An Airflow 3 DAG, `delivery_pipeline`, runs generate, clean, load, the
+  quality gate and the aggregate refresh once per weekly batch window, with catchup over the
+  three windows, retries with exponential backoff, timeouts and failure logging. It runs from
+  its own Compose file, layered on the core one. A failing quality check stops the run before
+  the aggregate refresh, and clearing and rerunning a date leaves the business tables unchanged.
 - **Dashboard.** A Streamlit page on `127.0.0.1:8501`, connected as the read-only role. It
   shows, for a date range and a set of cities:
   - headline KPIs;
@@ -69,12 +78,13 @@ flowchart LR
 | Dependencies | `uv` with a committed `uv.lock` | Reproducible installs (`uv sync --locked`) |
 | Data generation | NumPy (seeded) | Deterministic synthetic data, byte-identical per seed |
 | Processing | Plain Python (standard library) | Validation, dispositions and GPS rules, record by record |
-| File storage | PyArrow | Parquet I/O for the cleaned layer, partitioned by reporting date |
+| File storage | PyArrow | Parquet I/O for the cleaned layer, partitioned by date |
 | Database | PostgreSQL 18.6 (`postgres:18.6-trixie`) | `raw` / `staging` / `analytics` / `audit` schemas |
 | Driver | psycopg 3 | Parameterised SQL, `COPY` bulk loads |
 | Configuration | python-dotenv | Settings and passwords from a git-ignored `.env` |
 | Dashboard | Streamlit 1.64 (built-in charts) | `make dashboard`; pandas, Altair and PyArrow 25 arrive only as Streamlit's dependencies, and the pipeline itself does not use pandas |
-| Containers | Docker Compose (`core` profile) | PostgreSQL bound to `127.0.0.1` |
+| Orchestration | Apache Airflow 3.3.2 (LocalExecutor) | `delivery_pipeline` DAG: retries, timeouts, quality gate, catchup over the batch windows |
+| Containers | Docker Compose (`core` profile; `airflow` profile in `docker-compose.airflow.yml`) | PostgreSQL and Airflow, bound to `127.0.0.1`, with a memory limit per container |
 | Testing | pytest, pytest-cov | Unit and integration suites, coverage |
 | Quality gates | ruff (lint and format), mypy (strict), gitleaks | `make lint`, `make scan` |
 | Security checks | pip-audit, bandit, Trivy | `make audit`, `make bandit`; Trivy in CI |
@@ -123,8 +133,12 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 | Incremental metric refresh vs full rebuild | identical row counts (`make metrics`) |
 | Index tuning, `order_event_summary` (median of 3) | 72.487 ms to 25.323 ms ([benchmarks](docs/benchmarks.md)) |
 | Dashboard queries as the read-only role (`make dashboard-check`) | 7 queries in 0.10 s on the full dataset; max RSS 76,120,064 bytes |
-| Tests | 334 unit (no services, 8.92 s) and 145 integration (91.48 s) |
-| Coverage of `src/` (`make coverage`) | 77 % unit only; 86.41 % combined, with no exclusions |
+| Tests | 359 unit (no services, 6.92 s) and 150 integration (113.56 s) |
+| Coverage of `src/` (`make coverage`) | 76 % unit only; 86.32 % combined, with no exclusions |
+| Airflow DAG parse (`make airflow-dag-check`) | `delivery_pipeline` parses; 5 tasks in order; schedule = the 3 batch windows; retries, backoff, timeouts and callbacks set |
+| Airflow DAG run (rerun of the last batch window from the UI) | all 5 tasks succeeded in 2 min 2 s; business-table row counts unchanged |
+| Memory, PostgreSQL + Airflow (`make airflow-stats`) | about 1.0-1.1 GiB idle; peak 2.12-2.26 GiB during a DAG run (two runs) |
+| Airflow image (`make airflow-image-info`) | 3,821,003,600 bytes, of which 3,252,573,702 are the official base image |
 
 ## Data quality
 
@@ -149,6 +163,8 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
   - one deliberately failing case per quality check;
   - edge cases (empty file, malformed row, duplicate batch, missing required column, extra
     column).
+  - orchestration support: loading one more batch per scheduled run, rerunning a date without
+    duplicate business rows, and a deliberately failing quality check.
 - **Attribution.** Every test carries exactly one of the two markers; collection stops
   otherwise, so a failure always belongs to one suite.
 
@@ -156,15 +172,15 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 
 Two GitHub Actions workflows run on every push to `main` and on every pull request. Both use a
 read-only token and no repository secrets. Every action is pinned to a full commit SHA and the
-PostgreSQL image to its digest.
+PostgreSQL and Airflow images to their digests.
 
 | Workflow | Jobs |
 |---|---|
-| [`tests.yml`](.github/workflows/tests.yml) | Lint and type check (+ workflow validation); unit tests with no services; integration tests and the 80 % coverage gate against PostgreSQL started by `make up` with passwords generated in the job; determinism check (`make generate-check`) on Linux |
-| [`security.yml`](.github/workflows/security.yml) (also weekly) | gitleaks on the working tree and the full git history; pip-audit on every locked package; bandit on `src/`; Trivy on the repository (gating) and on the PostgreSQL image (report only) |
+| [`tests.yml`](.github/workflows/tests.yml) | Lint and type check (+ workflow validation); unit tests with no services; integration tests and the 80 % coverage gate against PostgreSQL started by `make up` with passwords generated in the job; Airflow DAG parse check; determinism check (`make generate-check`) on Linux |
+| [`security.yml`](.github/workflows/security.yml) (also weekly) | gitleaks on the working tree and the full git history; pip-audit on every locked package; bandit on `src/`; Trivy on the repository (gating) and on the PostgreSQL and Airflow images (report only) |
 
 CI generates its own small dataset; no data is committed. Dependabot proposes weekly updates for
-the actions, the Python lockfile and the Compose image. Security reports: [SECURITY.md](SECURITY.md).
+the actions, the Python lockfile, the Compose image and the Airflow Dockerfile. Security reports: [SECURITY.md](SECURITY.md).
 
 ## Repository layout
 
@@ -173,12 +189,17 @@ the actions, the Python lockfile and the Compose image. Security reports: [SECUR
 ├── Makefile               every command (make help)
 ├── SECURITY.md            how to report a vulnerability
 ├── docker-compose.yml     PostgreSQL (core profile), localhost only
+├── docker-compose.airflow.yml
+│                          Airflow services and the DAG parse check, layered on the core file
 ├── docker/postgres/       init script: roles, schema, indexes, grants
+├── docker/airflow/        Airflow image with the project's runtime environment
+├── dags/                  the delivery_pipeline DAG
 ├── sql/                   schema, roles, grants, indexes, analyst and dashboard queries
 ├── src/
 │   ├── ingestion/         seeded generator and defect injection
 │   ├── transformations/   validation, dispositions, GPS rules, Parquet output
 │   ├── database/          idempotent loader, metrics refresh, analytics runner
+│   ├── orchestration/     batch windows and the command of each DAG task
 │   ├── quality/           data-quality checks and the quality gate
 │   ├── dashboard/         Streamlit dashboard (read-only role) and its data access
 │   └── groundtruth/       manifest verification and reconciliation (tests and reports only)
@@ -195,8 +216,8 @@ Further reading: [data contracts](docs/data_contracts.md) ·
 
 ## Known limitations
 
-- **Scope.** Batch only and local only. There is no orchestration, streaming, distributed
-  processing or cloud storage in this repository.
+- **Scope.** Batch and local only. Object storage, streaming, distributed processing and cloud
+  resources are not in this repository yet.
 - **The quality gate roughly doubles the load time** (about 60 s of 113.49 s).
   - The checks run with nested-loop joins disabled, because the batch's uncommitted rows have
     no planner statistics.
@@ -214,5 +235,8 @@ Further reading: [data contracts](docs/data_contracts.md) ·
 - **The dashboard is a local tool.** It is bound to `127.0.0.1` with no login, and reads
   synthetic data through the read-only role. Streamlit's XSRF and CORS protections stay at
   their defaults.
-- **Coverage.** Unit-only coverage is 77 %. The command-line entry points and report writers
+- **Airflow is heavy for a laptop.** PostgreSQL plus Airflow peak at 2.12-2.26 GiB during a run,
+  and the image is 3.8 GB, mostly the official Airflow base image. The Airflow UI uses the
+  development-only simple auth manager with a generated password, bound to `127.0.0.1`.
+- **Coverage.** Unit-only coverage is 76 %. The command-line entry points and report writers
   are exercised by `make` targets rather than by pytest.

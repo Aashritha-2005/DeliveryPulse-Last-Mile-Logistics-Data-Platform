@@ -1,0 +1,171 @@
+# Airflow services (the "airflow" Compose profile), kept in their own file so the core stack
+# never needs any AIRFLOW_ variable. Always used together with docker-compose.yml, which holds
+# the pipeline database the tasks write to:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.airflow.yml \
+#       --profile core --profile airflow <command>
+#
+# The `make airflow-*` targets run exactly that (docs/operations.md, "Airflow").
+# `${VAR:?message}` makes Compose refuse to start when a required variable is missing;
+# scripts/airflow_env_check.sh additionally rejects the CHANGE_ME placeholders.
+
+# Shared settings of the Airflow containers. Runtime files (logs, the generated admin password)
+# live in named volumes inside the containers, never in the project directory.
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  image: deliverypulse-airflow:3.3.2
+  profiles: ["airflow"]
+  user: "${AIRFLOW_UID:?set AIRFLOW_UID in .env}:0"
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.api_fastapi.auth.managers.simple.simple_auth_manager.SimpleAuthManager
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/auth/passwords.json.generated
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/deliverypulse/dags
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD:?set AIRFLOW_DB_PASSWORD in .env}@airflow-db:5432/airflow
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "True"
+    # The DAG imports src.orchestration; tasks run the project venv (src/orchestration/commands.py).
+    PYTHONPATH: /opt/deliverypulse
+    # Pipeline database, reached on the Compose network; passwords from .env.
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    DELIVERYPULSE_ETL_PASSWORD: ${DELIVERYPULSE_ETL_PASSWORD:?set DELIVERYPULSE_ETL_PASSWORD in .env}
+    DELIVERYPULSE_READONLY_PASSWORD: ${DELIVERYPULSE_READONLY_PASSWORD:?set DELIVERYPULSE_READONLY_PASSWORD in .env}
+    TZ: UTC
+  volumes:
+    - ./dags:/opt/deliverypulse/dags:ro
+    - ./src:/opt/deliverypulse/src:ro
+    - ./sql:/opt/deliverypulse/sql:ro
+    # Generated data: the only project path the containers write to (git-ignored).
+    - ./data:/opt/deliverypulse/data
+    - airflow_logs:/opt/airflow/logs
+    - airflow_auth:/opt/airflow/auth
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  airflow-db:
+    # Airflow's own metadata database, separate from the pipeline data. No published port.
+    image: ${POSTGRES_IMAGE:-postgres:18.6-trixie}
+    profiles: ["airflow"]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:?set AIRFLOW_DB_PASSWORD in .env}
+      POSTGRES_DB: airflow
+      TZ: UTC
+    volumes:
+      - airflow_db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U airflow -d airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    mem_limit: 512m
+    shm_size: 128mb
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  airflow-init:
+    <<: *airflow-common
+    # One-shot: create or upgrade Airflow's metadata schema, then exit.
+    command: db migrate
+    restart: "no"
+    mem_limit: 1g
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+
+  airflow-api-server:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      # Localhost only; never 0.0.0.0.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    mem_limit: 1g
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    # LocalExecutor: the scheduler runs the tasks, so its limit covers the largest task
+    # (`clean`, measured at about 1.0 GiB on the 50,000-order dataset).
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    mem_limit: 2g
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      # Defined in docker-compose.yml (core profile).
+      postgres:
+        condition: service_healthy
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob --hostname \"$${HOSTNAME}\""]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-check:
+    # One-shot DAG parse check (`make airflow-dag-check`, also run in CI). Uses the official
+    # base image pinned by digest, mounts only the code it reads, read-only, and has no network.
+    image: apache/airflow:3.3.2-python3.12@sha256:9df9c8be4096b9cc626bd7cb1f2b8c712eef66c59c615f8c7e6200871ca10bd1
+    profiles: ["airflow-check"]
+    user: "${AIRFLOW_UID:?set AIRFLOW_UID in .env}:0"
+    command: ["python", "/opt/deliverypulse/scripts/airflow_dag_check.py"]
+    environment:
+      PYTHONPATH: /opt/deliverypulse
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      # No metadata database is involved; skip the entrypoint's connection check.
+      CONNECTION_CHECK_MAX_COUNT: "0"
+    volumes:
+      - ./dags:/opt/deliverypulse/dags:ro
+      - ./src:/opt/deliverypulse/src:ro
+      - ./scripts:/opt/deliverypulse/scripts:ro
+    network_mode: none
+    mem_limit: 1g
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  # Explicit names so `make airflow-reset` removes exactly these Airflow volumes.
+  airflow_db:
+    name: deliverypulse_airflow_db
+  airflow_logs:
+    name: deliverypulse_airflow_logs
+  airflow_auth:
+    name: deliverypulse_airflow_auth

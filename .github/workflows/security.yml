@@ -84,7 +84,7 @@ jobs:
         run: make bandit
 
   trivy:
-    name: Trivy (filesystem and PostgreSQL image)
+    name: Trivy (filesystem, PostgreSQL and Airflow images)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -112,5 +112,17 @@ jobs:
           # built here. Its Debian base can carry CVEs that this project cannot fix, which would
           # turn CI permanently red. The findings stay visible in the job log; the filesystem
           # scan above, over this project's own lockfile and configuration, is the gate.
+          exit-code: "0"
+          format: table
+      - name: Airflow base image scan (report only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: apache/airflow:3.3.2-python3.12@sha256:9df9c8be4096b9cc626bd7cb1f2b8c712eef66c59c615f8c7e6200871ca10bd1
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # Report only, for the same reason as the PostgreSQL image: the official Airflow image
+          # bundles many third-party packages this project does not control. The packages this
+          # project adds come from uv.lock, which the filesystem scan and make audit gate.
           exit-code: "0"
           format: table

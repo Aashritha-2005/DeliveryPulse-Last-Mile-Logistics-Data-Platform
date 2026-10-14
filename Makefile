@@ -31,12 +31,20 @@ LABEL ?= current
 QUALITY_ARGS ?=
 # Local port of `make dashboard` (bound to 127.0.0.1 only).
 DASHBOARD_PORT ?= 8501
+# Airflow: its services live in docker-compose.airflow.yml, layered on the core file so the
+# airflow profile always runs together with core (which holds the pipeline data). The core
+# targets above never load that file, so they need no AIRFLOW_ variable.
+COMPOSE_AIRFLOW_FILES := docker compose -f docker-compose.yml -f docker-compose.airflow.yml
+COMPOSE_AIRFLOW := $(COMPOSE_AIRFLOW_FILES) --profile core --profile airflow
+AIRFLOW_IMAGE := deliverypulse-airflow:3.3.2
+AIRFLOW_BASE_IMAGE := apache/airflow:3.3.2-python3.12@sha256:9df9c8be4096b9cc626bd7cb1f2b8c712eef66c59c615f8c7e6200871ca10bd1
+DAG_ID := delivery_pipeline
 # Minimum combined (unit + integration) line coverage of src/ for `make coverage`.
 COVERAGE_MIN ?= 80
 # Admin-only: runs a SQL file inside the container as the bootstrap superuser (index DDL).
 ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f /deliverypulse/sql/$(1)'
 
-.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check
+.PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset
 
 help:
 	@echo "DeliveryPulse targets:"
@@ -72,6 +80,17 @@ help:
 	@echo "  make quality-report    prove every manifest defect type is detected; update $(REPORT)"
 	@echo "  make dashboard         start the Streamlit dashboard on http://127.0.0.1:$(DASHBOARD_PORT) (read-only role; needs 'make up')"
 	@echo "  make dashboard-check   run every dashboard query as the read-only role; print rows and timings"
+	@echo "  make quality-demo-plant   demo: insert one bad order so the next quality run fails"
+	@echo "  make quality-demo-remove  demo: delete that order again (leaves no trace)"
+	@echo "  make airflow-build     build the DeliveryPulse Airflow image"
+	@echo "  make airflow-up        start core + airflow (UI on http://127.0.0.1:8080) and wait until healthy"
+	@echo "  make airflow-down      stop core + airflow; KEEPS every volume"
+	@echo "  make airflow-password  print the generated Airflow admin password"
+	@echo "  make airflow-runs      list the $(DAG_ID) runs with state, start and end"
+	@echo "  make airflow-stats     memory and CPU of every running DeliveryPulse container"
+	@echo "  make airflow-dag-check parse and verify the DAG inside the pinned Airflow image"
+	@echo "  make airflow-image-info size of the Airflow image and of the project venv inside it"
+	@echo "  make airflow-reset     DELETE Airflow's metadata, logs and password (asks for confirmation)"
 
 lint:
 	$(UV_RUN) ruff check .
@@ -178,3 +197,43 @@ dashboard:
 
 dashboard-check:
 	$(UV_RUN) python -m src.dashboard.data
+
+quality-demo-plant:
+	$(UV_RUN) python -m src.quality.demo plant
+
+quality-demo-remove:
+	$(UV_RUN) python -m src.quality.demo remove
+
+airflow-build:
+	bash scripts/airflow_env_check.sh
+	$(COMPOSE_AIRFLOW) build airflow-init
+
+airflow-up:
+	@test -x $(INIT_SCRIPT) || { echo "ERROR: $(INIT_SCRIPT) is not executable. Fix with: chmod 755 $(INIT_SCRIPT)" >&2; exit 1; }
+	bash scripts/airflow_env_check.sh
+	$(COMPOSE_AIRFLOW) up -d --wait --wait-timeout 300
+
+airflow-down:
+	$(COMPOSE_AIRFLOW) down
+
+airflow-password:
+	@$(COMPOSE_AIRFLOW) exec -T airflow-api-server cat /opt/airflow/auth/passwords.json.generated; echo
+
+airflow-runs:
+	$(COMPOSE_AIRFLOW) exec -T airflow-scheduler airflow dags list-runs $(DAG_ID) --output table
+
+airflow-stats:
+	docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}" $$($(COMPOSE_AIRFLOW) ps -q)
+
+airflow-dag-check:
+	$(COMPOSE_AIRFLOW_FILES) --profile airflow-check run --rm airflow-dag-check
+
+airflow-image-info:
+	@echo "Image sizes in bytes (uncompressed):"
+	@docker image inspect --format "  $(AIRFLOW_IMAGE)  {{.Size}}" $(AIRFLOW_IMAGE)
+	@docker image inspect --format "  base apache/airflow:3.3.2-python3.12  {{.Size}}" $(AIRFLOW_BASE_IMAGE)
+	@echo "Project venv inside the image, and its largest packages (KiB):"
+	@docker run --rm --network none --entrypoint sh $(AIRFLOW_IMAGE) -c 'du -sh /opt/deliverypulse/.venv; du -sk /opt/deliverypulse/.venv/lib/python3.12/site-packages/* | sort -rn | head -12'
+
+airflow-reset:
+	bash scripts/airflow_reset.sh
