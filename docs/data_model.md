@@ -42,15 +42,15 @@ The ETL role has SELECT and INSERT only; the read-only dashboard role has no acc
 
 ```mermaid
 erDiagram
-    dim_date ||--o{ daily_delivery_metrics : "metric_date = date_key"
-    dim_city ||--o{ daily_delivery_metrics : city
-    dim_city ||--o{ orders : city
-    dim_city ||--o{ drivers : city
+    dim_date ||..o{ daily_delivery_metrics : "metric_date = date_key"
+    dim_city ||..o{ daily_delivery_metrics : city
+    dim_city ||..o{ orders : city
+    dim_city ||..o{ drivers : city
     drivers ||--o{ orders : driver_id
     drivers ||--o{ delivery_events : driver_id
     drivers ||--o{ driver_shift_events : driver_id
     drivers ||--o{ driver_performance : driver_id
-    dim_date ||--o{ driver_performance : "metric_date = date_key"
+    dim_date ||..o{ driver_performance : "metric_date = date_key"
     orders ||--o{ delivery_events : order_id
 
     orders {
@@ -97,6 +97,8 @@ erDiagram
         date metric_date PK
     }
 ```
+
+Solid links show declared foreign keys; dotted links show logical dimension joins by value.
 
 - **Facts:** `orders` (one row per order, latest accepted version) and `delivery_events` (one
   row per unique event). `driver_shift_events` is a supporting fact for utilisation.

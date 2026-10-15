@@ -10,7 +10,7 @@ GITLEAKS_CONFIG := .gitleaks.toml
 # Python files outside src/ (scripts/*.py); lint, mypy and bandit cover them too, so moving
 # code out of src/ never leaves it unscanned. Listed explicitly: GNU Make 3.81 has no $(wildcard
 # ...) sorting guarantee issues here, but an explicit list fails loudly when a file is renamed.
-PY_SCRIPTS := scripts/airflow_dag_check.py scripts/benchmark.py scripts/k8s.py scripts/k8s_pipeline.py
+PY_SCRIPTS := scripts/airflow_dag_check.py scripts/benchmark.py scripts/k8s.py scripts/k8s_pipeline.py scripts/demo.py
 KUBECTL ?= /opt/homebrew/bin/kubectl
 KIND ?= kind
 K8S_RUN = KUBECTL="$(KUBECTL)" KIND="$(KIND)" $(UV_RUN) --locked python -m scripts.k8s
@@ -67,6 +67,12 @@ ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STO
 .PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset s3-up s3-down s3-logs s3-stats lake-export lake-check test-s3 test-spark bench-data benchmark bench-clean db-sizes
 
 help:
+	@echo "  make demo-preflight    USER: read-only demo isolation, credentials and disk checks"
+	@echo "  make demo              USER: isolated 5,000-order PostgreSQL demo (no heavy profiles)"
+	@echo "  make demo-down         USER: stop only the demo PostgreSQL; keep all data"
+	@echo "  make demo-dashboard    USER: dashboard against the demo database only"
+	@echo "  make demo-disk         read-only host free-space checkpoint"
+	@echo "  make test-demo         unit tests for demo isolation and failure handling"
 	@echo "  make k8s-preflight     user: disk, selected kind/kubectl versions and Docker status"
 	@echo "  make test-k8s-manifests static Kubernetes manifest and stage-guard tests"
 	@echo "  make test-k8s          USER ONLY: live Kubernetes replay and wrong-password tests"
@@ -138,7 +144,7 @@ help:
 lint:
 	$(UV_RUN) ruff check .
 	$(UV_RUN) ruff format --check .
-	$(UV_RUN) mypy src tests $(PY_SCRIPTS)
+	$(UV_RUN) --locked --group bench --group streaming --group nosql mypy src tests $(PY_SCRIPTS)
 
 .PHONY: mongo-env-check mongo-up mongo-down mongo-logs
 mongo-env-check:
@@ -430,3 +436,20 @@ test-k8s-manifests:
 	$(UV_RUN) --locked pytest tests/unit/test_k8s.py
 test-k8s:
 	KUBECTL="$(KUBECTL)" KIND="$(KIND)" $(UV_RUN) --locked pytest -x -m k8s
+
+# User-run lifecycle: fixed standalone project, never the main Compose volume.
+.PHONY: demo demo-preflight demo-disk demo-down demo-dashboard demo-reset test-demo
+demo:
+	$(UV_RUN) --locked python -m scripts.demo run
+demo-preflight:
+	$(UV_RUN) --locked python -m scripts.demo preflight
+demo-disk:
+	$(UV_RUN) --locked python -m scripts.demo disk
+demo-down:
+	$(UV_RUN) --locked python -m scripts.demo down
+demo-reset:
+	$(UV_RUN) --locked python -m scripts.demo reset
+demo-dashboard:
+	$(UV_RUN) --locked python -m scripts.demo dashboard
+test-demo:
+	$(UV_RUN) --locked pytest tests/unit/test_demo.py

@@ -1,8 +1,108 @@
 # Benchmarks
 
-Every number on this page comes from a real run on the reference machine, with the command,
-dataset, date and hardware recorded next to it. Nothing is estimated. A section without numbers
-has not been measured yet.
+Measurements on this page come from recorded runs or explicitly identified artifact audits.
+Commands, datasets, dates and hardware accompany the results. Derived arithmetic and planning
+estimates are labelled; a pending section does not claim a completed measurement.
+
+## Batch evidence and read-only artifact audit
+
+Reference dataset: `seed-42_orders-50000_cfg-449e309b`, generated with 50,000 orders, seed 42,
+generator version 2, on the MacBook Pro Apple Silicon reference environment. Existing outputs
+from `make profile` and `make quality-report` are in [data_quality_report.md](data_quality_report.md).
+On 2026-10-15, a read-only audit of the existing raw CSV files and manifest confirmed:
+
+| Existing artifact | Result |
+|---|---|
+| Three `shift_events.csv` files, counted with `csv.DictReader` | 16,282 + 16,341 + 16,374 = **48,997 rows** |
+| Manifest `config.defect_rates_per_10k` | **22 configured injected types** |
+| Manifest `counts` and `cases` | **25 case types**, **4,395 cases**; includes two derived orphan types and one natural update type |
+| Manifest SHA-256 | `cc1379190ed1927af2aac600499258b68900365008064581a4b87af59bf8543f` |
+| Existing quality-report SHA-256 at audit | `3ecee59b639e0b124e157f490b7f357c589a10a7f36c1e9e3fc600c17a7cb274` |
+
+The manifest was read from `data/ground_truth/seed-42_orders-50000_cfg-449e309b/defect_manifest.json`;
+the CSV files were read from the corresponding `data/raw/` batch folders. No generation, load,
+profile, report or benchmark command was rerun to obtain these counts. The report's source
+totals are 50,484 order rows, 441,222 event rows, 48,997 shift rows and 833 driver rows. Its
+reconciliation and quality tables preserve the per-source and per-batch evidence.
+
+Other confirmed historical batch results on that dataset: 49,450 accepted orders,
+439,822 delivery events, 1,355 rejected records, replay with identical business counts,
+and integration tests for failed-batch recovery and late/orphan handling. The recorded
+post-planner-fix load was 121.88 s; its three quality evaluations took 17.81, 21.01 and
+27.18 s, with no blocking failure. Their sum, **66.00 s / 121.88 s ≈ 54.15%**, is derived
+arithmetic, not a separate gate-disabled measurement. Generation and standalone Parquet
+transformation are not included in that load time.
+
+Historical PostgreSQL size was displayed as 686 MB by PostgreSQL's binary-size formatter;
+raw output was 86,633,684 bytes. **686 × 1,048,576 / 86,633,684 ≈ 8.30** is a derived ratio
+using a rounded historical database size, not the current database size. Later schema-level
+measurement reported 686.9 MiB of project tables: raw 218.7, staging 214.9, audit 174.8 and
+analytics 78.6 MiB. These are different measurements and are not interchangeable.
+
+Confirmed lake export output is 118 objects, 1,093,033 rows and 57,501,391 bytes;
+measured peak RSS changed from
+923,090,944 to 653,492,224 bytes after streaming each object. No new export was run.
+
+## Isolated core demo: acceptance pending
+
+The wrapper uses 5,000 orders, seed 42, a separate database volume and `data/demo/`.
+The user's first run on 2026-10-15 used the default **83 drivers**, dataset
+`seed-42_orders-5000_cfg-99b76f46`, on the MacBook Pro Apple Silicon reference environment.
+Command: `make demo`, following `make demo-disk`. Its saved evidence
+`data/demo/run-20261015T005538383606Z.json` records `image_cached: true`,
+`database_before: "empty"`, no existing demo inputs and `status: "passed"`.
+
+| Stage | Seconds |
+|---|---:|
+| Cached pull | 4.373 |
+| Healthy startup | 6.082 |
+| Generation | 0.926 |
+| Transformation | 3.783 |
+| Load | 15.086 |
+| Reconciliation | 0.996 |
+| Whole-database quality | 6.901 |
+| Analytics | 0.347 |
+| Dashboard query check | 0.347 |
+| Total, including wrapper checks | **40.106** |
+
+All three batches loaded; all 518 manifest cases reconciled. Each batch and the standalone
+quality run had 50 checks, zero blocking failures and zero warnings. Seven dashboard queries
+passed. Dependency installation and the interactive dashboard are excluded. Evidence records
+21,303,513,088 free bytes before and 21,119,909,888 after; this host-space change includes
+unrelated activity and is not an isolated volume-size measurement. No peak-memory measurement
+is claimed. This remains a valid timing for the **old configuration**, whose simulation had
+857 no-driver cancellations out of 5,000 orders (17.14%); it is not the revised demo's timing.
+
+An offline fleet comparison on 2026-10-15 held orders at 5,000 and seed at 42, using the existing
+`GeneratorConfig.create`, `plan_drivers` and `simulate` functions without a database:
+
+| Drivers | No-driver cancellations / all orders | Simulated late / delivered orders |
+|---|---|---|
+| 150 | 255 / 5,000 = 5.10% | 1,320 / 4,538 = 29.09% |
+| 250 | 66 / 5,000 = 1.32% | 841 / 4,740 = 17.74% |
+| 500 | 32 / 5,000 = 0.64% | 485 / 4,773 = 10.16% |
+
+The demo now explicitly passes **`--drivers 500`**; defaults and the main 50,000-order
+dataset are unchanged. Five cities, the 12 km city radius and 21-day schedule remain fixed,
+so fleet size cannot simply shrink in proportion to demand while retaining similar coverage.
+This is a chosen synthetic scenario, not fleet optimisation; more drivers lower utilisation.
+Changing driver count also changes random-number consumption, so these are different seeded
+worlds rather than a controlled comparison using identical orders. The late rates above are
+simulation totals before validation, not daily dashboard measurements.
+
+The normal generator entry point was also run with `--orders 5000 --seed 42 --drivers 500`
+and raw/ground-truth directories under `data/demo/fleet-check-wug52g7d/`. The resulting dataset
+is `seed-42_orders-5000_cfg-4e94aafb`; its manifest SHA-256 is
+`9f3aee49cfb253cf7a98acf82e273ec779a23a18fb46d83e8a1da01bee7112b1`.
+Read-only verification found zero problems across 452 cases. Generation emitted no capacity
+warning and the trial files totalled 10,157,303 bytes. No database load was done for this trial.
+The user deliberately declined a revised run to conserve disk space. **40.106 s remains
+the timing of record for the earlier 83-driver configuration**, not the current 500-driver
+configuration, which was verified offline only. Dependency installation and PostgreSQL image
+download are excluded (image size about 672 MB, user-reported; not measured transfer bytes).
+Download-inclusive timing is skipped, not pending. No general "within 10 minutes" setup
+claim is made. No 60–90 s recording was made; it is optional before publishing, with the
+existing dashboard screenshot used in the README.
 
 ## 1. Query tuning with indexes (metrics and analytics layer)
 

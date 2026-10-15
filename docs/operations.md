@@ -27,13 +27,12 @@ this machine intercept bare `python`, and `.python-version` makes them error.
 Run from the project root (`cd ~/DeliveryPulse`):
 
 ```bash
-uv lock                 # resolve dependencies into uv.lock (generated, never hand-written)
 uv sync --locked        # install exactly what uv.lock specifies into .venv/
-cp .env.example .env    # local settings; .env is git-ignored
+cp .env.example .env    # fresh checkout only; never overwrite an existing .env
 uv run python -c "import sys; print(sys.executable, sys.version)"   # must show .venv/ and 3.12.10
 ```
 
-Then replace every `CHANGE_ME` in `.env` with real local values. The core profile needs
+Set the core placeholders yourself; optional profile placeholders can remain unused. The core profile needs
 `POSTGRES_SUPERUSER_PASSWORD`, `DELIVERYPULSE_ETL_PASSWORD` and
 `DELIVERYPULSE_READONLY_PASSWORD` **before the first `make up`**. The Airflow profile also needs
 `AIRFLOW_DB_PASSWORD`, `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET` and a numeric `AIRFLOW_UID`
@@ -56,11 +55,15 @@ before `make airflow-build`, `make airflow-up` or `make airflow-dag-check`. The 
 | `make db-status` | Prints `PGDATA`, server version, `system_identifier`, timezone and project schemas |
 | `make reset-db` | **Deletes all database data** after you type `DELETE` (see below) |
 
-Every test carries exactly one marker, `unit` or `integration` (collection stops otherwise), and
+Every test carries exactly one of `unit`, `integration`, `s3`, `spark`, `kafka`, `mongo` or
+`k8s` (collection stops otherwise), and
 unit tests cannot open a database connection (they fail with "unit tests must not connect to a
 database"). So a failure in `make test` is always a unit failure, never a missing service.
 
 ## Synthetic data
+
+For the isolated 5,000-order quick start, use the [core demo](#isolated-core-demo) instead of
+the main-dataset commands below. Do not mix datasets in an existing database.
 
 Needs no Docker and no `.env`. The contract is in `docs/data_contracts.md`.
 
@@ -922,6 +925,147 @@ memory on the host.
   directory. Run `make scan` afterwards to confirm nothing was left in the project.
 - A working-tree scan does not prove that git history is clean. After publishing, run a history
   scan (`gitleaks git .`) yourself.
+
+## Isolated core demo
+
+The standalone `docker-compose.demo.yml` is intentionally **not layered on** the main file.
+It fixes project `deliverypulse-demo`, volume `deliverypulse_demo_pgdata` and database
+`deliverypulse_demo`; the default port is `127.0.0.1:55432`. The main file explicitly names
+its volume, so changing just a Compose project name would not isolate it. The helper checks
+the configured mounts and actual container identity before database access. Files stay under
+`data/demo/`; the main 50,000-order dataset, container and volume are outside this lifecycle.
+
+The owner runs all demo lifecycle commands. No optional service starts. The helper consumes
+only the existing core settings and prints no credentials; set them yourself, without sharing
+the environment file. `DEMO_PORT` is a process/Make environment override, not a required new
+environment-file setting. It must be unprivileged and different from the main database port.
+PostgreSQL uses the already approved 18.6 index digest, with a 1 GiB memory limit.
+
+Run one stage at a time from the repository root, and review its output before proceeding:
+
+```bash
+export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+make demo-disk
+make demo-preflight
+```
+
+These checks are read-only. Preflight checks core credentials privately, executable init
+script, daemon access, the dedicated port, Compose isolation and image-cache state. It reports
+whether the demo is already running and whether generated demo inputs exist. No image is
+pulled and no service is started. Admission requires 13 GiB host free space; stage checks
+retain the 11 GiB cancellation threshold plus a remaining-work reserve. Stop on any failure.
+
+Next, only after reviewing preflight:
+
+```bash
+make demo-disk
+make demo
+```
+
+The fixed 5,000-order, 500-driver, seed-42 run performs pull, healthy startup, generation, Parquet transform,
+database load with metrics/quality gate, reconciliation, whole-database quality, analytics and
+a read-only dashboard query check. Each step prints duration. A failure prevents later steps;
+no reset/cleanup runs automatically. `data/demo/run-*.json` records status, stage/total times,
+image/input cache state, database empty versus replay/retry, and host free bytes. A replay
+keeps business counts unchanged but may add quality audit rows. Unknown dataset identity or
+unattributed existing rows is an error, not an invitation to reset anything automatically.
+
+In a second terminal, `make demo-dashboard` uses the demo endpoint and serves port 8502.
+Open `http://127.0.0.1:8502`, record the dashboard, then Ctrl+C. Finish with a fresh disk check
+and `make demo-down`. This stops only the verified demo PostgreSQL container and retains its
+volume; the main PostgreSQL stays running. Do not use the main `make down` or `make reset-db`
+for demo cleanup.
+
+### Clean-start measurements and reset boundary
+
+The timing of record remains **40.106 s for the earlier 83-driver configuration**,
+dataset `seed-42_orders-5000_cfg-99b76f46`, with its image cached and database empty.
+The current 500-driver dataset `seed-42_orders-5000_cfg-4e94aafb` was verified offline only:
+32/5,000 no-driver cancellations (0.64%), 452 manifest cases verified and no capacity warning.
+The explicit `--drivers 500` changes only the demo configuration; no live run of it is claimed.
+See [the bounded comparison](benchmarks.md#isolated-core-demo-acceptance-pending).
+The measured time excludes dependency installation, PostgreSQL image download (about 672 MB
+image size reported by the owner, not measured transfer bytes) and the interactive dashboard.
+Both a revised demo run and download-inclusive timing were deliberately declined to conserve
+disk space. No recording was made; a 60–90 s recording is optional before publishing.
+Do not remove the shared PostgreSQL image or stop the main database for an abandoned timing run.
+
+For demo cleanup, the owner runs these from the repository root:
+
+```bash
+make demo-disk
+make demo-reset
+```
+
+**Data loss:** this requires typing `DELETE DEMO`, verifies the actual container mount and
+volume ownership, stops/removes the demo container and its Compose network, and deletes
+**only `deliverypulse_demo_pgdata`**, including its demo database and test database.
+`data/demo/raw`, `processed` and `ground_truth` are renamed into `data/demo/archive-<timestamp>/`.
+Run JSON, quality JSON and offline trial folders stay in `data/demo/`. Main PostgreSQL,
+`deliverypulse_pgdata`, other volumes and all images remain. No bulk pruning is involved.
+
+A read-only inventory on 2026-10-15 found **19,705,529 bytes (18.79 MiB)** in the three
+folders that will be archived, with 19,886,080 allocated file bytes. This is the archive's
+current expected content size, excluding directory metadata; a rename does not make a second
+copy and does not free those bytes. All files under `data/demo/`, including the offline
+trial and evidence JSON, total **29,886,315 bytes (28.50 MiB)**. These are host-file sizes,
+not the Docker volume size, which was not measured for this cleanup.
+
+The archive is not required to run the project; generated inputs are reproducible from their
+configuration. Deleting all of `data/demo/` also destroys the original timing JSON and local
+quality evidence, although their reported results remain in the benchmark documentation.
+Keep a copy of that small evidence file elsewhere first if the original is wanted.
+After `make demo-reset` succeeds, optional user-run deletion of **only `data/demo/`**:
+
+```bash
+uv run --locked python -c '
+from pathlib import Path
+import shutil
+root = Path.cwd().resolve()
+target = root / "data" / "demo"
+if not (root / "scripts" / "demo.py").is_file() or not (root / "docker-compose.demo.yml").is_file():
+    raise SystemExit("Stop: run from the repository root")
+if (root / "data").is_symlink() or target.is_symlink() or target.resolve() != target:
+    raise SystemExit("Stop: unexpected path or symbolic link")
+if not target.is_dir():
+    raise SystemExit("Stop: data/demo is not a directory")
+print("Permanently deletes only:", target)
+if input("Type DELETE data/demo: ") != "DELETE data/demo":
+    raise SystemExit("Cancelled")
+shutil.rmtree(target)
+print("Deleted data/demo only; no database or Docker action performed")
+'
+```
+
+Do not run another demo afterward when the purpose is to reclaim disk. If reset fails, stop
+and report its output before deleting files. Docker may release space inside its VM before
+returning it to the host; do not promise a particular host-space gain from volume deletion.
+
+For future runs, the 2 GiB disk planning reserve is not a measured storage requirement.
+Combined workload memory is estimated at
+0.5–1.5 GiB excluding Docker Desktop. Full lint additionally installs optional groups and is
+outside this lightweight-demo budget. Filesystem free-space changes also include unrelated
+activity and delayed Docker VM reclamation; do not equate them with isolated database size.
+
+### Diagnostics and development checks
+
+Pipeline commands log to stdout/stderr; there is no automatic durable full log. Demo timing
+JSON is under `data/demo/`; database failures are also retained in audit rows. The last
+disk-checkpoint line identifies the active stage. The whole-database quality JSON is
+`data/demo/quality-latest.json`, separate from the main dataset's report. A failed batch
+can be retried with `make demo` after correcting its cause: earlier successful batches skip.
+If identity or init fails, stop and report the error before any reset. The helper suppresses
+external failure details that might expose local credentials.
+
+Main service health uses `make db-status`; main PostgreSQL container logs are available via
+the user-run command in Troubleshooting. Airflow task logs and quality JSON live in its named
+log volume; Kafka/S3/Mongo logs have their existing `make *-logs` targets; kind saves private
+evidence under `data/k8s/`. Do not publish logs without reviewing them for local details.
+
+`make lint` now runs full mypy with the already locked `bench`, `streaming` and `nosql`
+groups. A first run may install those optional clients; no services or JVM are started.
+Plain `uv sync --locked` remains the core/development setup, and `make test` works without
+optional clients. The full lint check is never replaced by ignores or excluded modules.
 
 ## Freeing disk space
 

@@ -59,5 +59,5 @@ idempotent, including metric refresh and the quality gate. It does not prove a f
 load from Kubernetes into an empty database; the current identity guard requires successful
 prior database loads. The live replay and wrong-credential tests passed, and the user reported
 green GitHub CI including the pipeline image build/scan on 2026-10-15. A second, independent
-from-scratch README reproduction has not been performed; it is deferred to the pre-publishing
-check to conserve laptop disk space.
+from-scratch reproduction has not been performed; it remains an optional user-run pre-publishing
+check with disk gates, and is not required for core-demo acceptance.
