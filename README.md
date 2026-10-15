@@ -368,6 +368,7 @@ pre-publishing check to conserve laptop disk space; it has not been performed.
 
 ## Known limitations
 
+- **AWS proof deliberately skipped.** The S3 API path is proven locally against SeaweedFS; an AWS endpoint swap is a settings change guarded by `S3_ALLOW_AWS`. No AWS account, keys or cost were used ([decision](docs/decisions/aws.md)).
 - **Scope.** Local batch processing and a single-broker streaming landing demo. Streaming uses
   stateless contract rules and writes only to `raw.stream_events`; it does not update analytics
   or the lake.

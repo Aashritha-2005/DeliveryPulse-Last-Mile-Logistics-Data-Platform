@@ -1,0 +1,1 @@
+The optional AWS proof was deliberately skipped on 2026-10-15. The S3 API path is proven locally against SeaweedFS; swapping the endpoint to AWS is a settings change guarded by `S3_ALLOW_AWS`, which must be explicitly enabled only after approval. No AWS account, keys or cost were used for this project, and no execution or verification against AWS is claimed.
