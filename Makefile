@@ -10,7 +10,10 @@ GITLEAKS_CONFIG := .gitleaks.toml
 # Python files outside src/ (scripts/*.py); lint, mypy and bandit cover them too, so moving
 # code out of src/ never leaves it unscanned. Listed explicitly: GNU Make 3.81 has no $(wildcard
 # ...) sorting guarantee issues here, but an explicit list fails loudly when a file is renamed.
-PY_SCRIPTS := scripts/airflow_dag_check.py scripts/benchmark.py
+PY_SCRIPTS := scripts/airflow_dag_check.py scripts/benchmark.py scripts/k8s.py scripts/k8s_pipeline.py
+KUBECTL ?= /opt/homebrew/bin/kubectl
+KIND ?= kind
+K8S_RUN = KUBECTL="$(KUBECTL)" KIND="$(KIND)" $(UV_RUN) --locked python -m scripts.k8s
 COMPOSE := docker compose --profile core
 INIT_SCRIPT := docker/postgres/init-deliverypulse.sh
 
@@ -64,6 +67,10 @@ ADMIN_PSQL = $(COMPOSE) exec -T postgres sh -c 'psql --no-psqlrc -v ON_ERROR_STO
 .PHONY: help lint format test test-integration coverage audit bandit actionlint scan scan-selftest up down reset-db db-status generate generate-check profile clean-dataset transform reconcile load reconcile-db db-counts metrics analytics explain indexes-create indexes-drop quality quality-report dashboard dashboard-check quality-demo-plant quality-demo-remove airflow-build airflow-up airflow-down airflow-password airflow-runs airflow-stats airflow-dag-check airflow-image-info airflow-reset s3-up s3-down s3-logs s3-stats lake-export lake-check test-s3 test-spark bench-data benchmark bench-clean db-sizes
 
 help:
+	@echo "  make k8s-preflight     user: disk, selected kind/kubectl versions and Docker status"
+	@echo "  make test-k8s-manifests static Kubernetes manifest and stage-guard tests"
+	@echo "  make test-k8s          USER ONLY: live Kubernetes replay and wrong-password tests"
+	@echo "  Kubernetes stages: see docs/operations.md; run ONE stage then review its output"
 	@echo "  make mongo-env-check   validate MongoDB settings without printing values"
 	@echo "  make mongo-up          stop MongoDB, initialize users/indexes offline, start healthy"
 	@echo "  make mongo-down        stop MongoDB; KEEPS both volumes"
@@ -384,3 +391,42 @@ benchmark:
 
 bench-clean:
 	bash scripts/bench_clean.sh
+
+# USER ONLY except status/logs and the static manifest tests. No chained stage dependencies.
+.PHONY: k8s-preflight k8s-build k8s-cache-clean k8s-up k8s-load k8s-host-image-clean k8s-secret k8s-run k8s-replay k8s-status k8s-logs k8s-stats k8s-down test-k8s test-k8s-manifests
+k8s-preflight:
+	$(K8S_RUN) preflight
+k8s-build:
+	$(K8S_RUN) build
+k8s-cache-clean:
+	$(K8S_RUN) cache-clean
+k8s-up:
+	$(K8S_RUN) up
+k8s-load:
+	$(K8S_RUN) load
+.PHONY: k8s-image-info
+k8s-image-info:
+	$(K8S_RUN) image-info
+k8s-host-image-clean:
+	$(K8S_RUN) host-image-clean
+k8s-secret:
+	$(K8S_RUN) secret
+k8s-run:
+	$(K8S_RUN) run
+k8s-replay:
+	$(K8S_RUN) replay
+k8s-status:
+	$(K8S_RUN) status
+k8s-logs:
+	$(K8S_RUN) logs
+k8s-stats:
+	$(K8S_RUN) stats
+k8s-down:
+	$(K8S_RUN) down
+.PHONY: k8s-abort
+k8s-abort:
+	$(K8S_RUN) abort
+test-k8s-manifests:
+	$(UV_RUN) --locked pytest tests/unit/test_k8s.py
+test-k8s:
+	KUBECTL="$(KUBECTL)" KIND="$(KIND)" $(UV_RUN) --locked pytest -x -m k8s

@@ -482,3 +482,87 @@ disk [estimate, excluding image storage]**; the server's **768 MiB** limit is co
 not a promise of workload capacity. Keep heavy profiles separate. CI configuration is locally
 validated; the new MongoDB job still requires a real GitHub run.
 
+## Local Kubernetes: measured local run (2026-10-15)
+
+The approved demo uses the same 50,000-order seed-42 dataset and existing Compose PostgreSQL.
+Record the host hardware and date with the user-run results. `make k8s-up` records cluster
+creation seconds; `make k8s-build` records image bytes and ID; each Job records Kubernetes
+start/completion timestamps, observed elapsed seconds and periodic node memory samples.
+`make k8s-stats` gathers those records with host free bytes and node filesystem usage. Node
+samples include Kubernetes infrastructure; they are not application-only or continuous peaks.
+Evidence stays in ignored `data/k8s/` until reviewed and copied here as aggregate results.
+
+Record first/replay load summaries, quality results, and analytics count/content-hash equality.
+Successful Job logs are saved before their pods and temporary files are removed. The wrong-
+password test uses a separate temporary Secret and must fail without disclosing credentials.
+Hardware: MacBook Pro, Apple Silicon arm64, macOS 26, 16 GiB host RAM; Docker Desktop
+reported `memory_bytes=8319504384` (stats displays 7.748 GiB). kind v0.33.0, Kubernetes
+v1.37.0, Homebrew kubectl v1.37.1. PostgreSQL ran separately in Compose; other heavy profiles
+were stopped. The node and Python base use the approved index pins documented in operations.
+Commands: `make k8s-build`, `make k8s-up`, `make k8s-load`, `make k8s-secret`, `make k8s-run`,
+`make db-counts`, `make k8s-replay`, `make db-counts`, `make test-k8s`, `make k8s-status`,
+`make k8s-stats`. All were run with Docker Desktop's binary directory prefixed to PATH.
+
+| Measurement | Result |
+|---|---|
+| Pipeline image size | 764,439,884 bytes (about 0.71 GiB), tag `deliverypulse-pipeline:3597741be91902099a5e` |
+| Cluster creation | 86.07803262514062 s (86.08 s rounded) |
+| First pipeline Job | 133 s Kubernetes start-to-completion; 134.1364009170793 s observed |
+| Separate replay Job | 126 s Kubernetes start-to-completion; 128.34594708308578 s observed |
+| Live-suite replay Job | 119 s Kubernetes start-to-completion; 119.851827459177 s observed |
+| Pipeline entry point, excluding generator | 114.60537142699468 / 107.6236397160028 / 102.62140479699883 s, respectively |
+| Generator init | 12.49 / 11.41 / 10.50 s, respectively |
+| Largest sampled node memory, per pipeline Job | 1.91 / 2.109 / 1.919 GiB, respectively (12 / 11 / 11 samples) |
+| Post-test node memory sample | `914MiB / 7.748GiB` |
+| Physical host free after measurements | 19,607,977,984 bytes; checkpoint 18.261 GiB |
+| Node filesystem after measurements | `overlay 1055761844 19635752 982422668 2% /` (1K-blocks) |
+| Live suite | `2 passed, 787 deselected in 158.10s (0:02:38)` |
+
+The image load check compares all 10 ordered rootfs layer digests. Docker's host image ID is
+an OCI index digest and differs from the node's CRI config ID; they cannot be compared directly.
+Docker inspect exposes no separate config digest here. Both layer arrays matched, with no
+rebuild. Tags alone are never accepted as identity.
+
+All three pipeline runs verified source identity before writes, loaded **0 batches** and
+skipped **3** already loaded batches. The first run's load took 0.07 s; the two replay loads
+took 0.06 s each. Quality results: **50 checks, 0 blocking failures, 0 warnings** in 58.49,
+56.95 and 54.99 s, respectively. Both standalone runs and the live-suite replay preserved
+whole-row hashes and counts for all eight analytics tables:
+
+| Analytics table | Before and after |
+|---|---:|
+| orders | 49,450 |
+| delivery_events | 439,822 |
+| drivers | 828 |
+| driver_shift_events | 48,947 |
+| daily_delivery_metrics | 105 |
+| driver_performance | 12,345 |
+| dim_city | 5 |
+| dim_date | 21 |
+
+The explicit before/after `make db-counts` checks around the separate replay also preserved
+all raw/staging counts and database size (896 MB). Quality audit rows increased as expected:
+quality_runs 4 → 5; quality_results 200 → 250. The wrong-credential test failed cleanly with
+`ERROR: Kubernetes pipeline failed; check connectivity, credentials, dataset and gate` and
+cleaned up its own temporary Secret/Job. Afterwards status returned `secret/deliverypulse-db`;
+the real Secret remained, and the CronJob stayed suspended.
+
+Physical host free checkpoints: cluster create **20.170 → 19.361 GiB**; first pipeline run
+**18.250 → 18.246 GiB**; replay **18.246 → 18.253 GiB**; measurement stage
+**18.261 → 18.261 GiB**. The earlier build-cache cleanup reported 4.348GB internally but
+host free space remained 16.121 GiB immediately before/after; it is not counted as host
+space regained. Docker VM filesystem availability is distinct from physical host space.
+
+Limitations: one local session, an already populated database (this verifies replay, not a
+fresh load), no concurrent writers, suspended rather than scheduled CronJob execution, and
+no application-only or continuous memory peak. Node samples include infrastructure/workload
+but exclude Compose PostgreSQL. Observed Job durations include polling and log collection;
+controller durations come from Job timestamps. Host disk changes include unrelated activity
+and delayed Docker reclamation. Approved host image removal and cluster deletion subsequently
+exited 0: host-image cleanup checkpoints were 18.265 → 18.320 GiB; cluster deletion checkpoints
+were 18.821 → 18.820 GiB. Compose PostgreSQL and its volumes were left running/intact. The
+CI pipeline image build/scan passed on GitHub according to the user's 2026-10-15 confirmation.
+A second, independent from-scratch README reproduction has not been performed and is deferred
+to the pre-publishing check to conserve laptop disk space.
+Disk and memory planning estimates are in the [runbook](operations.md#local-kubernetes-staged-runbook).
+

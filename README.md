@@ -161,8 +161,8 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
 | Incremental metric refresh vs full rebuild | identical row counts (`make metrics`) |
 | Index tuning, `order_event_summary` (median of 3) | 72.487 ms to 25.323 ms ([benchmarks](docs/benchmarks.md)) |
 | Dashboard queries as the read-only role (`make dashboard-check`) | 7 queries in 0.10 s on the full dataset; max RSS 76,120,064 bytes |
-| Tests (2026-10-15) | 509 unit (9.86 s), 160 integration (142.71 s), 5 Spark equivalence (19.88 s), 4 Kafka (4.36 s); earlier live object-store check: 3 passed (2026-10-14, 8.21 s) |
-| Coverage of `src/` (`make coverage`, 2026-10-15) | 73 % unit only; 80.89 % combined unit + integration, with no exclusions |
+| Tests (2026-10-15 final Kubernetes sweep) | 608 unit (10.39 s), 163 PostgreSQL integration (141.40 s), 23 Kubernetes static tests (0.34 s, included in unit total); live kind replay/credential tests: 2 passed (158.10 s, before teardown) |
+| Coverage of `src/` (`make coverage`, 2026-10-15) | 76 % unit only (rounded report); 83.64 % combined unit + integration, with no exclusions or gate change |
 | Lake export (`make lake-export`) | 118 objects, 1,093,033 rows, 57,501,391 bytes in 8.20 s; a replay rewrites the same objects and deletes nothing. Streaming the objects cut the peak memory from 923,090,944 to 653,492,224 bytes |
 | Database size by schema (`make db-sizes`) | 686.9 MiB of project tables: raw 218.7, staging 214.9, audit 174.8, analytics 78.6 MiB |
 | Lake read-back (`make lake-check`) | raw 541,536 rows, cleaned 539,047, aggregated 12,450; every key, row count and byte matches its source |
@@ -207,7 +207,12 @@ container limit), dataset `seed-42_orders-50000_cfg-449e309b`, October 2026.
   fixture dataset, on several shards, and on both read layouts.
 - **Kafka tests** (`make test-kafka`, marker `kafka`), against the single broker and PostgreSQL:
   valid delivery, malformed records in the DLQ, replay and restart after a committed write.
-- **Attribution.** Every test carries exactly one of the five markers; collection stops
+- **MongoDB tests** (`make test-mongo`, marker `mongo`): raw-document loading, replay,
+  query equality and restricted database roles, with the optional MongoDB service running.
+- **Kubernetes tests** (`make test-k8s`, marker `k8s`): local kind replay against an already
+  populated PostgreSQL database and clean wrong-credential failure. The static manifest and
+  stage-guard tests (`make test-k8s-manifests`) also run in the unit suite.
+- **Attribution.** Every test carries exactly one of the seven markers; collection stops
   otherwise, so a failure always belongs to one suite.
 
 ## Continuous integration
@@ -222,7 +227,10 @@ PostgreSQL, Airflow and SeaweedFS images to their digests.
 | [`security.yml`](.github/workflows/security.yml) (also weekly) | gitleaks on the working tree and the full git history; pip-audit on every locked package; bandit on `src/` and the Python files in `scripts/`; Trivy on the repository (gating) and on the PostgreSQL, Airflow and SeaweedFS images (report only) |
 
 CI generates its own small dataset; no data is committed. Dependabot proposes weekly updates for
-the actions, the Python lockfile, the Compose images and the Airflow Dockerfile. Security reports: [SECURITY.md](SECURITY.md).
+the actions, the Python lockfile, the Compose images and the Airflow/pipeline Dockerfiles.
+A pipeline image build, entry-point smoke check and gating image scan run in `security.yml`;
+the GitHub run passed on 2026-10-15. CI creates no kind cluster.
+Security reports: [SECURITY.md](SECURITY.md).
 
 ## Repository layout
 
@@ -258,6 +266,105 @@ the actions, the Python lockfile, the Compose images and the Airflow Dockerfile.
 Further reading: [data contracts](docs/data_contracts.md) ·
 [data model](docs/data_model.md) · [operations](docs/operations.md) ·
 [benchmarks](docs/benchmarks.md) · [data quality report](docs/data_quality_report.md).
+
+## Run the pipeline on local Kubernetes (kind)
+
+The measured one-node kind Job ran against Compose PostgreSQL **already holding the dataset**.
+Every Kubernetes load skipped all three batches: **0 loaded, 3 skipped**. This demonstrates
+that the pipeline Job runs on kind and is idempotent, including metric refresh and the quality
+gate. It does **not** demonstrate a first-time Kubernetes load into an empty database. The
+source-identity guard deliberately requires the three successful database batches first.
+See [measurements](docs/benchmarks.md#local-kubernetes-measured-local-run-2026-10-15) and
+[design/security decisions](docs/decisions/kubernetes.md).
+
+Prerequisites on the tested Mac: Docker Desktop running; kind **v0.33.x** (tested v0.33.0);
+Homebrew kubectl **v1.37.x** at `/opt/homebrew/bin/kubectl` (tested v1.37.1); `uv`, Make and
+the locked development environment from Quick start. Docker Desktop's bundled kubectl
+v1.36.1 is rejected. `KUBECTL` and `KIND` are overridable Make variables for other hosts.
+Configure the existing PostgreSQL settings and ETL password locally as described in Quick
+start. Never print or commit credentials. Kafka, MongoDB, Airflow and the object store must
+be stopped. No concurrent pipeline writer may run during the comparison.
+
+Run these prerequisites from the repository root. The default 50,000-order seed-42 dataset
+must already be generated and loaded; these commands establish that prerequisite if needed.
+Do not reset an existing database or switch its dataset for this demo.
+
+```bash
+export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+uv sync --locked
+make up
+make generate ORDERS=50000 SEED=42
+make load
+make db-counts
+```
+
+Expect PostgreSQL healthy, dataset `seed-42_orders-50000_cfg-449e309b`, three successful
+batches (or three skips on replay), 49,450 analytics orders and 439,822 delivery events.
+If source identity or counts differ, stop and investigate before Kubernetes setup.
+
+Start with **at least 16 GiB physical host free space recommended**; the build refuses below
+13.5 GiB. The hard floor is 10 GiB and cancellation threshold is 11 GiB. Every stage checks
+again: cluster creation requires 12.8 GiB; load requires `11 + 2 × image size in GiB + 0.3`;
+Jobs require 12.5 GiB. Stop at any failed checkpoint. Docker VM free blocks and cache-prune
+totals are not reclaimed host space. Recheck actual host space after cleanup.
+
+Run **one command at a time**, reviewing its output before the next. The PATH export above
+applies to every command. Do not paste the whole sequence as an unattended script.
+
+```bash
+make k8s-preflight
+make k8s-build
+make k8s-cache-clean
+make k8s-up
+make k8s-load
+make k8s-image-info
+make k8s-secret
+make k8s-run
+make db-counts
+make k8s-replay
+make db-counts
+make test-k8s
+make k8s-status
+make k8s-stats
+```
+
+| Command | What to check before continuing |
+|---|---|
+| `k8s-preflight` | Disk checkpoint; selected kind/kubectl versions; Docker architecture/memory; `Kubernetes preflight: passed (no cluster created)` |
+| `k8s-build` | JSON with the content-derived tag, image ID, byte size and `loaded: false`; successful final disk checkpoint. Output may be quiet during the build |
+| `k8s-cache-clean` | Type `DELETE` to remove unused build cache, including cache from other projects; no volumes or tagged pipeline image removed. Docker reports its reclaimed total; physical host space may not increase immediately |
+| `k8s-up` | Actual `create_seconds`, node filesystem usage and final disk checkpoint. Creates one pinned node, localhost API and a private kubeconfig under ignored `data/k8s/` |
+| `k8s-load` | Ordered rootfs layers match the saved host build; config digests match when both stores expose them. Different/missing layers fail. Never accept tags alone |
+| `k8s-image-info` | Read-only host/node image identifiers and ordered layer arrays; no rebuild or export |
+| `k8s-secret` | `Kubernetes PostgreSQL connectivity: passed`; Secret values not shown; CronJob suspended. Selects only the ETL credential, sends it on stdin and never writes a Secret file |
+| `k8s-run` | Dataset identity verified before writes; `0 batches loaded, 3 already loaded (skipped)`; 50 quality checks with 0 blocking failures and 0 warnings; analytics counts/content hashes unchanged |
+| `k8s-replay` and surrounding `db-counts` | All business tables and aggregates identical, including hashes; audit quality-run counts may increase |
+| `test-k8s` | Both live tests pass: replay equality and a clean wrong-credential failure. Only temporary test Secret/Jobs are cleaned up |
+| `k8s-status` | CronJob suspended, no active successful Jobs left; `secret/deliverypulse-db` confirms the real Secret by name only |
+| `k8s-stats` | Image size, saved Job timings, node memory samples, physical host free bytes and node filesystem usage. Samples are not continuous application peaks |
+
+Successful Jobs save evidence before their built-in cleanup removes temporary pod storage.
+The CronJob stays suspended. **Keep the host pipeline image until the final cleanup**, so
+recreating a failed cluster does not require rebuilding it. For diagnosis use `make k8s-status`
+and `make k8s-logs`; stop on a failure, especially connectivity or identity mismatch. Never
+widen PostgreSQL's localhost port binding to resolve a connection failure.
+
+Final cleanup, after reviewing/saving results (one command at a time):
+
+```bash
+make k8s-host-image-clean
+make k8s-down
+```
+
+The first command re-verifies the node copy and removes only the host pipeline image tag.
+It must precede cluster deletion. The second asks for `DELETE` and removes the throwaway
+cluster, its Kubernetes Secrets and remaining pods; it leaves Compose volumes and PostgreSQL
+untouched. Both print fresh disk checkpoints. Removing Docker data may not immediately return
+physical host space. Obtain explicit deletion approval when running through an automation
+session. See the [operations runbook](docs/operations.md#local-kubernetes-staged-runbook) for
+disk recovery and limitations. The local staged run and CI pipeline image build/scan passed
+on 2026-10-15. A second, independent from-scratch README reproduction is deferred to the
+pre-publishing check to conserve laptop disk space; it has not been performed.
 
 ## Known limitations
 
@@ -301,6 +408,8 @@ Further reading: [data contracts](docs/data_contracts.md) ·
 - **Spark is not part of the pipeline.** It is an extra dependency group and needs Java 21; no
   pipeline command uses it. 5,000,000 orders was not benchmarked because it would exceed the
   4 GiB disk budget the benchmark holds itself to.
-- **Coverage.** Unit-only coverage is 73 %. The command-line entry points and report writers
-  are exercised by `make` targets rather than by pytest, and the object store, Spark and Kafka suites
-  are not counted in the coverage figure.
+- **Coverage.** Unit-only coverage is 76 % (rounded report); combined unit/PostgreSQL
+  integration coverage is 83.64 %. Some command-line/report paths remain uncovered. The
+  object-store, Spark, Kafka, MongoDB and Kubernetes live suites are not included. Coverage
+  measures `src/`; Kubernetes helpers in `scripts/` have direct regression tests, lint/type
+  checks and security scans but are outside that existing coverage scope.

@@ -98,4 +98,5 @@ markers = [
     "spark: tests that need a Java 21 runtime and the bench dependency group (make test-spark)",
     "kafka: tests against Kafka and PostgreSQL (make test-kafka)",
     "mongo: tests against MongoDB and PostgreSQL (make test-mongo)",
+    "k8s: user-run tests against the local kind cluster and PostgreSQL (make test-k8s)",
 ]

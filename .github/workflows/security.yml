@@ -26,6 +26,28 @@ env:
   UV_VERSION: "0.13.0"
 
 jobs:
+  pipeline-image:
+    name: Pipeline image build and scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build runtime image (no cluster)
+        run: docker build -f docker/pipeline/Dockerfile -t deliverypulse-pipeline:ci .
+      - name: Check entry point without network or credentials
+        run: docker run --rm --network none --read-only deliverypulse-pipeline:ci --help
+      - name: Pipeline image scan (gating)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: deliverypulse-pipeline:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-24.04

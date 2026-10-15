@@ -923,6 +923,31 @@ memory on the host.
 - A working-tree scan does not prove that git history is clean. After publishing, run a history
   scan (`gitleaks git .`) yourself.
 
+## Freeing disk space
+
+Project images are replaceable once no container references them. Remove only explicitly
+selected, unused images, after the owning service or cluster has been deliberately retired.
+If Docker reports an image is used by a running container, leave it in place and identify
+that container before deciding whether to stop it; do not force removal. Keep the PostgreSQL
+image while the core database is in use. Images pulled by digest may show `<none>` tags;
+identify them by the repository and pinned digest in the project configuration.
+
+| Image | How it returns when needed |
+|---|---|
+| `apache/kafka:4.3.1` | `make kafka-up` re-pulls the Compose-pinned digest. |
+| `mongodb/mongodb-community-server:8.0.32-ubi9-slim-20260930T065105Z` | `make mongo-up` re-pulls the Compose-pinned digest. |
+| `chrislusf/seaweedfs:4.48` | `make s3-up` re-pulls the Compose-pinned digest. |
+| `deliverypulse-airflow:3.3.2` and `apache/airflow:3.3.2-python3.12` | `make airflow-build` rebuilds the project image, pulling the pinned base when needed. |
+| `deliverypulse-pipeline:<content-derived tag>` | `make k8s-build` rebuilds it; `make k8s-load` loads it into the cluster. Use the guarded `make k8s-host-image-clean` while the verified node copy still exists. |
+| `kindest/node:v1.37.0` | After its cluster is deleted, the unused image can be removed; `make k8s-up` pulls the pinned digest again. |
+| `python:3.12.14-slim-trixie` and `ghcr.io/astral-sh/uv:0.13.0` | `make k8s-build` pulls the pinned build images again; `make airflow-build` also uses the pinned uv image. |
+
+Compose volumes hold persistent data and service configuration. Remove them only through
+the documented service-specific reset commands and their data-loss warnings, never for
+routine image cleanup. Image removal does not require volume removal. Docker Desktop can
+reclaim space inside its VM disk before returning it to macOS; check actual host free space
+again instead of treating Docker's reclaimed-byte total as immediately available host space.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -945,3 +970,84 @@ memory on the host.
 | `make load`: `column "window_start" ... does not exist` or `relation "audit.quality_runs" does not exist` | The database predates the quality framework. Reset: `make reset-db` (type `DELETE`), `make up`, `make load` |
 | `make quality-report`: `load-time quality results exist for batches ...` | Some batches were loaded before the quality framework existed, or failed; reset and load again |
 | Container fails at start with a permission or `chown` error | The capability set is too tight for this Docker version: `docker compose --profile core logs postgres` and report the error |
+
+## Local Kubernetes staged runbook
+
+Local replay and live tests passed against an already populated database: 0 batches loaded,
+3 skipped. This proves kind execution and idempotency, not first-time Kubernetes loading into
+an empty database. Use one terminal in the project root and run **one stage at a time**,
+reviewing its output before continuing. Invoke every Docker/cluster operation explicitly
+through its make target; deletion needs separate approval in an automation session. Nothing
+creates a cluster as a side effect of a static check. Keep PostgreSQL running and every other
+heavy profile stopped. Stop concurrent pipeline writers for the replay comparison.
+
+Prerequisites: kind v0.33.0, Homebrew kubectl v1.37.1 and Docker Desktop running. The Makefile
+uses `KUBECTL ?= /opt/homebrew/bin/kubectl` and `KIND ?= kind`; CI/Linux may override these with
+absolute paths. Preflight prints and enforces v1.37.x/v0.33.x. Docker Desktop's bundled
+kubectl v1.36.1 does not pass. The approved node image is
+`kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`;
+the runtime base is
+`python:3.12.14-slim-trixie@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f`.
+Both are manifest-index pins for amd64/arm64. No dependency installation is required beyond
+the existing locked project environment.
+
+The kind node runs privileged as an explicitly approved infrastructure exception. Application
+pods remain restricted, non-root, read-only, with no host mounts, privileges or API tokens.
+See [the decision](decisions/kubernetes.md). The cluster API binds to localhost. PostgreSQL
+retains its localhost binding; the connectivity probe must pass through `host.docker.internal`.
+If it fails, stop and report the output; never widen the database port exposure.
+
+The 10 GiB free-space floor is mandatory. Stop/cancel at 11 GiB. Fresh physical host checks
+run before and after each stage, and during commands. These checks are conservative admission
+guards, not a reservation: unrelated host writes and delayed Docker work can still consume
+space. Also check Docker's internal filesystem after cluster creation; do not confuse its
+virtual free space with physical host free space. A failed checkpoint blocks the next stage.
+
+| Stage / exact user command | Minimum free GiB before starting | Additional disk estimate | Expected evidence, not a measured result |
+|---|---:|---:|---|
+| `make k8s-preflight` | 13.5 | negligible | Selected tool versions, Docker architecture/memory, preflight passed |
+| `make k8s-build` | 13.5 | 1.5–2.5 GiB peak | Content-derived image tag, image ID and actual byte size |
+| `make k8s-cache-clean` | recovery permitted below 11 | reclaim depends on cache | Type DELETE; unused build cache removed, no volumes |
+| `make k8s-up` | 12.8 | 1.0–1.8 GiB | Dedicated kubeconfig; cluster-create seconds |
+| `make k8s-load` | 11 + 2 × image GiB + 0.3 | up to 2 × image size + 0.3 GiB | Ordered rootfs layer digests match; config digests also match when both exposed |
+| `make k8s-secret` | 12.5 for its probe | small | ETL Secret values not shown; connectivity passed; CronJob suspended |
+| `make k8s-run` | 12.5 | 0.5–1.5 GiB | Dataset identity verified before writes; quality gate succeeds; analytics unchanged |
+| `make k8s-replay` | 12.5 | 0.5–1.5 GiB | Same analytics counts and hashes; successful batches skipped |
+| `make test-k8s` | 12.5 | 0.5–1.5 GiB | Live replay and isolated wrong-password tests pass |
+| `make k8s-stats` | 11 | negligible | Image size, creation time, host free bytes, node disk and memory sample |
+| `make k8s-host-image-clean` | 11 | reclaim depends on sharing | Final cleanup: remove only verified local image tag, without force |
+| `make k8s-down` | recovery permitted below 11 | reclaims cluster storage | Type DELETE; cluster removed, Compose database and volumes kept |
+
+Do not combine these commands into a script. Each requires reviewing the previous stage.
+Build cache cleanup affects unused cache from other builds too, but never volumes. The host
+image is retained until final cleanup, and removable only after verifying the copy in kind.
+Remove it before deleting the cluster. Successful Jobs save logs/status
+in ignored `data/k8s/` before deleting their pods and temporary files. Failed Jobs remain for
+diagnosis. The default suspended CronJob must stay suspended during this disk-limited demo.
+
+`make k8s-secret` requires explicit authorization. It selects the existing `DELIVERYPULSE_ETL_PASSWORD`,
+`POSTGRES_DB` and `POSTGRES_PORT` using project configuration. It sets the host to
+`host.docker.internal` and never sends bootstrap, read-only, Kafka, MongoDB or S3 credentials.
+It sends Secret JSON through stdin, not command arguments or a file. The dedicated kubeconfig
+under ignored `data/k8s/` is private; do not paste it or Secret output into logs/chat.
+
+The generator produces the same 50,000-order seed-42 dataset inside bounded temporary storage.
+All three batch identities and source hashes must match the already loaded database before
+loading. No reset is needed. A previously loaded database should skip its three successful
+batches; record the actual result. Replay compares all analytics rows, including values, not
+audit attempt counts. Memory estimate: roughly 1–2 GiB for kind infrastructure, up to 1.5 GiB
+for the active application container plus PostgreSQL; combined usage must be measured. No
+metrics-server is installed. `k8s-stats` reports a sample of node memory, not pod peak memory.
+
+On any failure, **stop**. Run `make k8s-status` and `make k8s-logs` for evidence. If disk reaches
+11 GiB, the client cancels; the active Job observer also requests deletion of its Job.
+Server-side work can outlive a client or a failed deletion. User recovery:
+`make k8s-abort` stops the last Job and removes its temporary storage, or `make k8s-down`
+removes this throwaway cluster. Neither removes Compose volumes. Read-only diagnostics and
+cleanup remain available below the cancellation threshold. Do not retry automatically.
+
+`ImagePullBackOff`/`ErrImageNeverPull` means the image is absent or mismatched; repeat no build
+until inspected. `CreateContainerConfigError` points to missing configuration/Secret.
+Connectivity failure needs routing/credential diagnosis. `OOMKilled` needs a memory decision,
+not an automatic limit increase. A dataset mismatch needs source/database investigation,
+never an automatic reset. Local static checks do not establish that the CI image scan passes.

@@ -38,3 +38,11 @@ updates:
     cooldown:
       default-days: 14
     open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /docker/pipeline
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5
