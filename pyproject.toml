@@ -8,7 +8,7 @@ requires-python = ">=3.12,<3.13"
 # Runtime dependencies only; development tools are in the dev group below.
 dependencies = [
     "boto3==1.43.99",
-    "botocore==1.43.99",
+    "botocore==1.43.108",
     "numpy>=2.1",
     "psycopg[binary]>=3.2",
     "pyarrow>=17.0",
