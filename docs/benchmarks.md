@@ -43,6 +43,40 @@ Confirmed lake export output is 118 objects, 1,093,033 rows and 57,501,391 bytes
 measured peak RSS changed from
 923,090,944 to 653,492,224 bytes after streaming each object. No new export was run.
 
+### Parquet transformation timing (2026-10-11)
+
+User-run on the same dataset and hardware, with the Task 4 transformation code:
+
+| Command | Result |
+|---|---|
+| `/usr/bin/time -l make transform` (first run) | `transformed 3 batches in 31.68 s`; 32.34 s real; maximum resident set size 1,076,723,712 bytes (about 1.0 GiB) |
+| `make transform` (repeat) | `transformed 3 batches in 30.58 s`; per-source dispositions identical to the first run |
+
+The README's "~30 s" is rounded from these two runs. Later changes to the transformation were
+not re-timed on this dataset. The time does not include generation or the database load.
+
+### Quality check registry
+
+`src/quality/checks.py` defines **35 checks** in its `CHECKS` registry. Checks that run once per
+source produce several results, so a full evaluation stores **50 results**: the "50 checks"
+printed by `make quality` and by the demo. The whole-database run had zero blocking failures and
+zero warnings. All 25 manifest case types are detected; see
+[data_quality_report.md](data_quality_report.md).
+
+## Test coverage
+
+Measured on 2026-10-24 with `make coverage` on the reference MacBook Pro. It ran the unit suite,
+then the PostgreSQL integration suite, with coverage combined over `src/`:
+
+| Phase | Exact summary |
+|---|---|
+| Unit | `639 passed, 181 deselected in 27.02s`; `TOTAL 5918 1375 77%` |
+| Unit + integration (combined) | `163 passed, 657 deselected in 174.51s (0:02:54)`; `TOTAL 5918 929 84%`; `Required test coverage of 80% reached. Total coverage: 84.30%` |
+
+The previous recorded figure was 83.64% on 2026-10-15 (5,918 statements, 968 missed). The
+optional S3, Spark, Kafka, MongoDB and Kubernetes suites, and `scripts/`, are outside this
+figure.
+
 ## Isolated core demo
 
 The wrapper uses 5,000 orders, seed 42, a separate database volume and `data/demo/`.

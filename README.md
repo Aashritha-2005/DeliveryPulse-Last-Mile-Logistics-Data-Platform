@@ -5,14 +5,14 @@ and replay-safe batch loading. All data is synthetic.
 
 [![Tests](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/tests.yml)
 [![Security](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/security.yml/badge.svg)](https://github.com/Aashritha-2005/DeliveryPulse-Last-Mile-Logistics-Data-Platform/actions/workflows/security.yml)
-[![Coverage: 83.64%](https://img.shields.io/badge/coverage-83.64%25-green)](#testing-ci-and-security)
+[![Coverage: 84.30%](https://img.shields.io/badge/coverage-84.30%25-green)](docs/benchmarks.md#test-coverage)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ![Dashboard: delivery trends, late-delivery rates, peak hours and driver performance](docs/images/dashboard.png)
 
 The screenshot shows the confirmed 50,000-order dataset: 49,450 accepted orders over
-September 10–30, 2026. No demo recording has been made; a 60–90 s terminal/dashboard recording
-is an optional pre-publishing step. The screenshot is the presentation artifact in use.
+September 10–30, 2026. No demo video or GIF was made; this screenshot is the only visual
+artifact.
 
 ## Results at a glance
 
@@ -26,17 +26,17 @@ These numbers are not predictions for the 5,000-order quick start.
 | Accepted business data | 49,450 orders and 439,822 delivery events |
 | Rejected records | 1,355, retained with reasons |
 | Duplicates removed | 1,000: 350 orders, 600 delivery events, 50 shift events; plus 100 stale order versions ignored ([per source and batch](docs/data_quality_report.md)) |
-| End-to-end runtime | Not measured as one run for the 50,000-order dataset; only stages were timed (transformation ~30 s, load with quality gate 121.88 s). The measured end-to-end run is the 5,000-order, 500-driver demo: **38.708 s** from an empty database with a cached image (2026-10-23). An earlier 40.106 s figure was a different, 83-driver configuration ([details](docs/benchmarks.md#isolated-core-demo)) |
+| End-to-end runtime | Not measured as one run for the 50,000-order dataset; only stages were timed (transformation ~30 s, [measured 31.68 s and 30.58 s](docs/benchmarks.md#parquet-transformation-timing-2026-10-11); load with quality gate 121.88 s). The measured end-to-end run is the 5,000-order, 500-driver demo: **38.708 s** from an empty database with a cached image (2026-10-23). An earlier 40.106 s figure was a different, 83-driver configuration ([details](docs/benchmarks.md#isolated-core-demo)) |
 | Reconciliation | 4,395 manifest cases; every source/batch balances accepted + rejected + duplicate + stale + pending |
-| Quality | 35 check definitions produce 50 results; whole-database run: zero blocking failures and warnings; 25/25 case types detected |
+| Quality | 35 check definitions produce 50 results ([registry](docs/benchmarks.md#quality-check-registry)); whole-database run: zero blocking failures and warnings; 25/25 case types detected |
 | Replay and recovery | Repeated batches preserve business data; failed-batch rollback/retry and late/orphan handling covered by integration tests |
 | Load with quality gate | 121.88 s for three batches; this excludes separate generation/Parquet transformation |
 | SQL tuning: `order_event_summary` | Median 72.487 → 25.323 ms, three warm-cache runs ([plans and protocol](docs/benchmarks.md#16-results-run-2-2026-10-12-current-index-set)) |
 | Largest scale benchmark | Spark completed 2M generated orders in 63.169 s; pandas stopped at the 4 GiB memory limit |
 | pandas/Spark crossover | About 1M orders: 43.374 / 40.919 s on the benchmark subset |
-| Parquet read layouts | Single / partitioned: pandas 0.851 / 1.280 s; Spark 8.473 / 8.442 s. No useful gain on this workload |
-| Coverage | Combined unit/PostgreSQL result on 2026-10-15: 83.64%; optional live suites and `scripts/` are outside this `src/` figure |
-| CI | Green on the confirmed pushed commits, including the pipeline image build and scan; current badges link to live workflow status |
+| Parquet read layouts | Single / partitioned: pandas 0.851 / 1.28 s; Spark 8.473 / 8.442 s. No useful gain on this workload |
+| Coverage | Combined unit/PostgreSQL result on 2026-10-24: **84.30%** ([record](docs/benchmarks.md#test-coverage)); optional live suites and `scripts/` are outside this `src/` figure |
+| CI | Tests green on `86ecbf0`. Security was red on `86ecbf0` because new pillow and certifi advisories had been published; the fix is in `9c6ffc2`, whose CI result is not yet recorded here. The badges link to live workflow status |
 
 Sources: [artifact provenance and batch results](docs/benchmarks.md#batch-evidence-and-read-only-artifact-audit),
 [data-quality report](docs/data_quality_report.md), [scale measurements](docs/benchmarks.md#2-scale-benchmark-pandas-vs-pyspark).
@@ -198,6 +198,8 @@ Image pulls that reuse cached layers are not cold downloads.
 - [Local Kubernetes](docs/decisions/kubernetes.md): restricted application pods, explicit
   infrastructure exception and staged disk checks.
 - [AWS deliberately skipped](docs/decisions/aws.md): local S3 evidence only.
+- [Dependency-age exceptions](docs/decisions/dependency-age-exceptions.md): security fixes
+  adopted before the usual 14-day minimum, with the reasons and dates.
 
 ## Data quality
 
@@ -259,12 +261,11 @@ Plain `uv sync --locked` and core unit tests still work without those optional c
 PostgreSQL integration tests require the normal core test database and use rollback isolation;
 they are separate from the lightweight demo and never run automatically inside it.
 
-Following the demo fleet revision on 2026-10-15, **634 unit tests** passed, including
-26 demo tests and 23 static Kubernetes tests. The preceding full sweep passed
-**163 PostgreSQL integration tests**.
-Combined `src/` coverage in that full sweep was **83.64%** (5,918 statements, 968 missed);
-unit-only reporting rounded to 76%. Live kind tests belong to the earlier confirmed run.
-The coverage badge is a dated recorded value, not a live coverage service.
+On 2026-10-24, **639 unit tests** passed, including 31 demo tests and 23 static Kubernetes
+tests, and **163 PostgreSQL integration tests** passed.
+Combined `src/` coverage was **84.30%** (5,918 statements, 929 missed); unit-only reporting
+rounded to 77% ([record](docs/benchmarks.md#test-coverage)). Live kind tests belong to the
+earlier confirmed run. The coverage badge is a dated recorded value, not a live coverage service.
 Optional S3, Spark, Kafka, MongoDB and Kubernetes suites run separately.
 Format, full lint from a base-only environment, secret scan, dependency audit, Bandit and
 workflow validation also passed locally. The current 500-driver demo passed live from an
@@ -281,11 +282,12 @@ Actions use SHA pins; no cloud credentials are needed.
 
 - **Local evidence:** one laptop and synthetic workloads; no production throughput, multi-node
   scaling, Java implementation or Hadoop/HDFS deployment claim.
-- **Demo:** 38.708 s is the current 500-driver run with a cached image and installed
-  dependencies. It was not a fresh-copy setup test; download timing was skipped and no
-  recording was made. A recording is optional before publishing. An optional from-scratch
-  Kubernetes reproduction has not been done; it stays user-run with disk gates and is not
-  core-demo acceptance.
+- **Demo:** 38.708 s is the current 500-driver run from an empty demo database, with
+  dependencies already installed and the PostgreSQL image already cached. No fresh-clone setup
+  was timed; first-time dependency installation and the image download (about 672 MB) are
+  excluded, so the project makes no "within 10 minutes" claim.
+- **Recording:** no demo video or GIF was made; the dashboard screenshot is the only visual
+  artifact.
 - **AWS:** deliberately skipped. The local SeaweedFS S3 path is proven; an AWS endpoint change
   is guarded by `S3_ALLOW_AWS`. No AWS account, keys or cost were used.
 - **Batch storage cost:** for the historical 50,000-order dataset, PostgreSQL reported
@@ -301,6 +303,11 @@ Actions use SHA pins; no cloud credentials are needed.
 - **Streaming:** one Kafka broker, stateless subset, database landing only; no analytics/S3 updates.
 - **MongoDB:** duplicates raw storage and is SSPL-licensed; the query result is one access pattern.
 - **Kubernetes:** single-node replay with a suspended CronJob; no empty-database first load.
+  No independent from-scratch reproduction of the runbook has been performed. There is no
+  Deployment manifest because the pipeline is a batch Job, not a long-running service.
+- **Dependency age:** certifi, pillow, streamlit and the pipeline base image were adopted before
+  the usual 14-day minimum to fix security advisories
+  ([reasons and dates](docs/decisions/dependency-age-exceptions.md)).
 - **Business rules:** late GPS checks use only the predecessor; utilisation above 100% is retained
   and flagged under the documented rule. Synthetic driver utilisation was 3.75–22.76%
   (median 12.14%) because the generator sizes the fleet generously.
