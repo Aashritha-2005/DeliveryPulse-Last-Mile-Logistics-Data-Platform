@@ -43,9 +43,44 @@ Confirmed lake export output is 118 objects, 1,093,033 rows and 57,501,391 bytes
 measured peak RSS changed from
 923,090,944 to 653,492,224 bytes after streaming each object. No new export was run.
 
-## Isolated core demo: acceptance pending
+## Isolated core demo
 
 The wrapper uses 5,000 orders, seed 42, a separate database volume and `data/demo/`.
+
+### Current configuration (500 drivers): timing of record
+
+Run by the user on 2026-10-23 at commit `38426c0`, on the MacBook Pro Apple Silicon reference
+environment, from a clean demo state. Command: `make demo`. Dataset
+`seed-42_orders-5000_cfg-4e94aafb` (5,000 orders, **500 drivers**, seed 42). Evidence
+`data/demo/run-20261023T192914223539Z.json` records `image_cached: true`,
+`container_running: false`, `raw_files_present: false`, `database_before: "empty"` and
+`status: "passed"`. The pull step was skipped because the pinned digest was cached, and
+startup used `--pull never`, so the run made no registry call.
+
+| Stage | Seconds |
+|---|---:|
+| Pull | skipped (digest cached) |
+| Healthy startup | 5.841 |
+| Generation | 1.190 |
+| Transformation | 4.115 |
+| Load | 17.312 |
+| Reconciliation | 1.011 |
+| Whole-database quality | 7.471 |
+| Analytics | 0.323 |
+| Dashboard query check | 0.340 |
+| Total, including wrapper checks | **38.708** |
+
+Stage times and the total are copied from the evidence file and rounded to milliseconds. The
+user reported from the console that all 452 manifest cases reconciled and that quality ran
+50 checks with zero blocking failures and zero warnings. Those counts are console output and
+are not stored in the evidence file. Dependency installation, the image download and the
+interactive dashboard are excluded. Evidence records 47,035,543,552 free bytes before and
+46,750,527,488 after. That change includes unrelated host activity, so it is not a volume-size
+measurement. No peak memory is claimed. The run was not a fresh-copy setup test, so there is
+still no general "within 10 minutes" claim.
+
+### Earlier configuration (83 drivers): superseded
+
 The user's first run on 2026-10-15 used the default **83 drivers**, dataset
 `seed-42_orders-5000_cfg-99b76f46`, on the MacBook Pro Apple Silicon reference environment.
 Command: `make demo`, following `make demo-disk`. Its saved evidence
@@ -70,8 +105,9 @@ quality run had 50 checks, zero blocking failures and zero warnings. Seven dashb
 passed. Dependency installation and the interactive dashboard are excluded. Evidence records
 21,303,513,088 free bytes before and 21,119,909,888 after; this host-space change includes
 unrelated activity and is not an isolated volume-size measurement. No peak-memory measurement
-is claimed. This remains a valid timing for the **old configuration**, whose simulation had
-857 no-driver cancellations out of 5,000 orders (17.14%); it is not the revised demo's timing.
+is claimed. This timing measures a **different configuration**, whose simulation had 857
+no-driver cancellations out of 5,000 orders (17.14%). It also included a 4.373 s cached pull
+that the current wrapper skips. Do not compare it directly with the 38.708 s run.
 
 An offline fleet comparison on 2026-10-15 held orders at 5,000 and seed at 42, using the existing
 `GeneratorConfig.create`, `plan_drivers` and `simulate` functions without a database:
@@ -95,14 +131,12 @@ and raw/ground-truth directories under `data/demo/fleet-check-wug52g7d/`. The re
 is `seed-42_orders-5000_cfg-4e94aafb`; its manifest SHA-256 is
 `9f3aee49cfb253cf7a98acf82e273ec779a23a18fb46d83e8a1da01bee7112b1`.
 Read-only verification found zero problems across 452 cases. Generation emitted no capacity
-warning and the trial files totalled 10,157,303 bytes. No database load was done for this trial.
-The user deliberately declined a revised run to conserve disk space. **40.106 s remains
-the timing of record for the earlier 83-driver configuration**, not the current 500-driver
-configuration, which was verified offline only. Dependency installation and PostgreSQL image
-download are excluded (image size about 672 MB, user-reported; not measured transfer bytes).
-Download-inclusive timing is skipped, not pending. No general "within 10 minutes" setup
-claim is made. No 60–90 s recording was made; it is optional before publishing, with the
-existing dashboard screenshot used in the README.
+warning and the trial files totalled 10,157,303 bytes. No database load was done for this trial;
+the 2026-10-23 run above later loaded this same dataset end to end. Dependency installation
+and PostgreSQL image download are excluded from both demo timings (image size about 672 MB,
+user-reported; not measured transfer bytes). Download-inclusive timing is skipped, not pending.
+No 60–90 s recording was made; it is optional before publishing, with the existing dashboard
+screenshot used in the README.
 
 ## 1. Query tuning with indexes (metrics and analytics layer)
 

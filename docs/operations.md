@@ -982,16 +982,20 @@ for demo cleanup.
 
 ### Clean-start measurements and reset boundary
 
-The timing of record remains **40.106 s for the earlier 83-driver configuration**,
-dataset `seed-42_orders-5000_cfg-99b76f46`, with its image cached and database empty.
-The current 500-driver dataset `seed-42_orders-5000_cfg-4e94aafb` was verified offline only:
-32/5,000 no-driver cancellations (0.64%), 452 manifest cases verified and no capacity warning.
-The explicit `--drivers 500` changes only the demo configuration; no live run of it is claimed.
-See [the bounded comparison](benchmarks.md#isolated-core-demo-acceptance-pending).
+The timing of record is **38.708 s for the current 500-driver configuration**, dataset
+`seed-42_orders-5000_cfg-4e94aafb`, run by the owner on 2026-10-23 at commit `38426c0` from a
+clean state: database empty, no demo inputs, container not running, image cached (pull skipped).
+All 452 manifest cases reconciled; quality ran 50 checks with zero blocking failures and zero
+warnings. Evidence: `data/demo/run-20261023T192914223539Z.json`. Stage times are in
+[the benchmark record](benchmarks.md#isolated-core-demo).
+The earlier **40.106 s** run (2026-10-15) measured a different configuration: 83 drivers,
+dataset `seed-42_orders-5000_cfg-99b76f46`, including a 4.373 s cached pull. It is not
+comparable with the current figure. The explicit `--drivers 500` changes only the demo
+configuration.
 The measured time excludes dependency installation, PostgreSQL image download (about 672 MB
 image size reported by the owner, not measured transfer bytes) and the interactive dashboard.
-Both a revised demo run and download-inclusive timing were deliberately declined to conserve
-disk space. No recording was made; a 60–90 s recording is optional before publishing.
+Download-inclusive timing was deliberately declined to conserve disk space. No recording was
+made; a 60–90 s recording is optional before publishing.
 Do not remove the shared PostgreSQL image or stop the main database for an abandoned timing run.
 
 For demo cleanup, the owner runs these from the repository root:

@@ -6,10 +6,10 @@ performed by the repository owner, with explicit approval of each destructive op
 
 ## Evidence and reproduction
 
-- [ ] Preserve the measured scope: 40.106 s is the earlier 5,000-order, 83-driver, seed-42
-  configuration (`seed-42_orders-5000_cfg-99b76f46`), with an empty demo database and cached
-  image. The current 500-driver configuration was verified offline only: 32/5,000 no-driver
-  cancellations, 452 manifest cases, no warning. Do not imply a measured run of that version.
+- [ ] Preserve the measured scope: 38.708 s is the current 5,000-order, 500-driver, seed-42
+  configuration (`seed-42_orders-5000_cfg-4e94aafb`, 2026-10-23), with an empty demo database
+  and cached image (pull skipped). The earlier 40.106 s figure was a different, 83-driver
+  configuration (`seed-42_orders-5000_cfg-99b76f46`); never present it as the current timing.
 - [ ] State that dependency installation and the PostgreSQL image download are excluded.
   Download-inclusive timing was deliberately skipped to conserve disk; there is no general
   "within 10 minutes" setup claim. No image removal or additional timing run is scheduled.

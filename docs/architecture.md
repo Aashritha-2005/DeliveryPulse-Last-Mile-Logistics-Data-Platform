@@ -32,7 +32,7 @@ back that transaction and are recorded separately in audit metadata.
 
 | Boundary | Command | Scope |
 |---|---|---|
-| Isolated core demo | `make demo`, `make demo-down` | 5,000 orders, seed 42; current 500-driver configuration verified offline only; live timing covers the earlier 83-driver configuration |
+| Isolated core demo | `make demo`, `make demo-down` | 5,000 orders, 500 drivers, seed 42; measured 38.708 s from an empty database with a cached image (2026-10-23) |
 | Main batch dataset | `make generate`, `make transform`, `make load` | Content-derived identities; retries and late/orphan handling |
 | Evidence | `make reconcile-db`, `make quality-report` | Manifest verification; production classification never reads ground truth |
 | Read-only access | `make analytics`, `make dashboard` | Analytics role; no raw-table grants |

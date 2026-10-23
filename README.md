@@ -26,7 +26,7 @@ These numbers are not predictions for the 5,000-order quick start.
 | Accepted business data | 49,450 orders and 439,822 delivery events |
 | Rejected records | 1,355, retained with reasons |
 | Duplicates removed | 1,000: 350 orders, 600 delivery events, 50 shift events; plus 100 stale order versions ignored ([per source and batch](docs/data_quality_report.md)) |
-| End-to-end runtime | Not measured as one run for the 50,000-order dataset; only stages were timed (transformation ~30 s, load with quality gate 121.88 s). The one measured end-to-end run is the earlier 5,000-order, 83-driver demo: 40.106 s with a cached image; the current 500-driver demo has not been timed ([details](docs/benchmarks.md#isolated-core-demo-acceptance-pending)) |
+| End-to-end runtime | Not measured as one run for the 50,000-order dataset; only stages were timed (transformation ~30 s, load with quality gate 121.88 s). The measured end-to-end run is the 5,000-order, 500-driver demo: **38.708 s** from an empty database with a cached image (2026-10-23). An earlier 40.106 s figure was a different, 83-driver configuration ([details](docs/benchmarks.md#isolated-core-demo)) |
 | Reconciliation | 4,395 manifest cases; every source/batch balances accepted + rejected + duplicate + stale + pending |
 | Quality | 35 check definitions produce 50 results; whole-database run: zero blocking failures and warnings; 25/25 case types detected |
 | Replay and recovery | Repeated batches preserve business data; failed-batch rollback/retry and late/orphan handling covered by integration tests |
@@ -104,17 +104,20 @@ Date/city dimension links are logical joins, not declared foreign keys.
 
 ## Quick start: isolated core demo
 
-**Timing of record: 40.106 s**, measured with the earlier demo configuration:
-5,000 orders, **83 drivers**, seed 42, dataset `seed-42_orders-5000_cfg-99b76f46`.
-This was an empty-database run with the image already cached. It excludes dependency
+**Timing of record: 38.708 s**, measured on 2026-10-23 with the current configuration:
+5,000 orders, **500 drivers**, seed 42, dataset `seed-42_orders-5000_cfg-4e94aafb`.
+This was an empty-database run with the image already cached, so the pull step was skipped.
+All 452 manifest cases reconciled, and quality ran 50 checks with zero blocking failures and
+zero warnings. Stage times: startup 5.841 s, generate 1.190 s, transform 4.115 s, load
+17.312 s, reconcile 1.011 s, quality 7.471 s, analytics 0.323 s, dashboard check 0.340 s
+([details](docs/benchmarks.md#isolated-core-demo)). The timing excludes dependency
 installation, the PostgreSQL image download (about **672 MB**, user-reported image size,
 not measured transfer bytes), and the interactive dashboard. Download-inclusive timing was
 deliberately skipped; no general "within 10 minutes" setup claim is made.
 
-The current **500-driver configuration was verified offline only**: 32/5,000 no-driver
-cancellations, 452 manifest cases verified, and no capacity warning. It has no measured
-database/demo run. The earlier timing must not be attributed to this configuration; a rerun
-was deliberately declined to conserve disk space.
+An earlier **40.106 s** run (2026-10-15) used a different configuration: 83 drivers, dataset
+`seed-42_orders-5000_cfg-99b76f46`, and a 4.373 s cached pull. It is kept for the record and
+is not comparable with the current figure.
 
 Prerequisites: uv, GNU Make, Docker Desktop with Compose, and uv-managed Python 3.12.
 On macOS, add Docker Desktop's CLI directory to PATH. From a fresh checkout:
@@ -264,8 +267,8 @@ unit-only reporting rounded to 76%. Live kind tests belong to the earlier confir
 The coverage badge is a dated recorded value, not a live coverage service.
 Optional S3, Spark, Kafka, MongoDB and Kubernetes suites run separately.
 Format, full lint from a base-only environment, secret scan, dependency audit, Bandit and
-workflow validation also passed locally. Live evidence covers the earlier 83-driver demo;
-the current 500-driver configuration has offline verification only.
+workflow validation also passed locally. The current 500-driver demo passed live from an
+empty database on 2026-10-23 (38.708 s).
 
 GitHub Actions runs lint, unit, integration/coverage, determinism, Airflow parse, S3, Spark,
 Kafka and MongoDB checks. Security includes tree/history secret scanning, locked dependency
@@ -278,10 +281,11 @@ Actions use SHA pins; no cloud credentials are needed.
 
 - **Local evidence:** one laptop and synthetic workloads; no production throughput, multi-node
   scaling, Java implementation or Hadoop/HDFS deployment claim.
-- **Demo:** 40.106 s measures only the earlier 83-driver cached-image configuration. The current
-  500-driver configuration is offline-only; download timing was skipped and no recording was
-  made. A recording is optional before publishing. Optional independent
-  Kubernetes reproduction remains user-run with disk gates; it is not core-demo acceptance.
+- **Demo:** 38.708 s is the current 500-driver run with a cached image and installed
+  dependencies. It was not a fresh-copy setup test; download timing was skipped and no
+  recording was made. A recording is optional before publishing. An optional from-scratch
+  Kubernetes reproduction has not been done; it stays user-run with disk gates and is not
+  core-demo acceptance.
 - **AWS:** deliberately skipped. The local SeaweedFS S3 path is proven; an AWS endpoint change
   is guarded by `S3_ALLOW_AWS`. No AWS account, keys or cost were used.
 - **Batch storage cost:** for the historical 50,000-order dataset, PostgreSQL reported
