@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -184,6 +185,106 @@ def test_failed_step_stops_pipeline_and_records_failure(
     record = json.loads(next((layout / "data/demo").glob("run-*.json")).read_text())
     assert record["status"] == "failed"
     assert "load" not in record["steps"]
+    assert record["failed_step"] == "transform"
+    assert "synthetic failure" in record["failure"]["reason"]
+
+
+def test_failed_command_names_step_command_exit_code_and_stderr(
+    layout: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The evidence and the console must say which step failed and why (the pull failure of
+    2026-10-23 recorded neither)."""
+
+    async def preflight(env: dict[str, str]) -> dict[str, Any]:
+        return {"image_cached": False}
+
+    async def command(args: list[str], env: dict[str, str], **kwargs: Any) -> str:
+        if "pull" in args:
+            raise demo.CommandFailedError(" ".join(args), 18, "Error response from daemon: denied")
+        return ""
+
+    monkeypatch.setattr(demo, "preflight", preflight)
+    monkeypatch.setattr(demo, "checkpoint", lambda *a: 20 * demo.GIB)
+    monkeypatch.setattr(demo, "command", command)
+    with pytest.raises(demo.CommandFailedError):
+        asyncio.run(demo.run_demo({}))
+
+    record = json.loads(next((layout / "data/demo").glob("run-*.json")).read_text())
+    assert record["status"] == "failed"
+    assert record["steps"] == {}
+    assert record["failed_step"] == "pull"
+    failure = record["failure"]
+    assert failure["exit_code"] == 18
+    assert failure["command"].startswith("docker compose --project-name deliverypulse-demo")
+    assert failure["command"].endswith("pull postgres")
+    assert failure["stderr_excerpt"] == "Error response from daemon: denied"
+    assert failure["reason"]
+    assert "Demo step pull failed: command `docker compose" in capsys.readouterr().out
+
+
+def test_command_failure_reports_sanitised_stderr(layout: Path) -> None:
+    """A real failing process: exit code and stderr kept; credential values and paths removed."""
+    fake = uuid.uuid4().hex  # generated per run, so no credential-like literal in the source
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "DELIVERYPULSE_ETL_PASSWORD": fake,
+        "HOME": str(Path.home()),
+    }
+    script = f"echo 'login failed for {fake} in {layout}/x' >&2; exit 7"
+
+    with pytest.raises(demo.CommandFailedError) as excinfo:
+        asyncio.run(demo.command(["sh", "-c", script], env))
+
+    error = excinfo.value
+    assert error.exit_code == 7
+    assert error.stderr_excerpt == "login failed for *** in ./x"
+    assert fake not in str(error) and fake not in error.command
+    assert str(layout) not in str(error)
+
+
+def test_stderr_excerpt_keeps_only_the_last_lines() -> None:
+    raw = "\n".join(f"line {n}" for n in range(40)).encode()
+
+    excerpt = demo.stderr_excerpt(raw, {})
+
+    assert excerpt.startswith(f"line {40 - demo.STDERR_LINES}")
+    assert excerpt.endswith("line 39")
+
+
+def test_cached_image_makes_no_registry_call() -> None:
+    """With the pinned digest cached there is no pull step, and up never pulls."""
+    cached = demo.startup_commands(image_cached=True)
+    missing = demo.startup_commands(image_cached=False)
+
+    assert [name for name, _ in cached] == ["up"]
+    assert [name for name, _ in missing] == ["pull", "up"]
+    for _, args in cached + missing:
+        assert args[: len(demo.compose())] == demo.compose()  # same project and file
+    up = dict(cached)["up"]
+    assert up[up.index("--pull") + 1] == "never"
+    assert dict(missing)["up"] == up
+
+
+def test_cached_run_records_the_skipped_pull(layout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    async def preflight(env: dict[str, str]) -> dict[str, Any]:
+        return {"image_cached": True}
+
+    async def command(args: list[str], env: dict[str, str], **kwargs: Any) -> str:
+        calls.append(args)
+        raise demo.CommandFailedError(" ".join(args), 1, "stop here")
+
+    monkeypatch.setattr(demo, "preflight", preflight)
+    monkeypatch.setattr(demo, "checkpoint", lambda *a: 20 * demo.GIB)
+    monkeypatch.setattr(demo, "command", command)
+    with pytest.raises(demo.CommandFailedError):
+        asyncio.run(demo.run_demo({}))
+
+    assert not any("pull" in args and "--pull" not in args for args in calls)
+    record = json.loads(next((layout / "data/demo").glob("run-*.json")).read_text())
+    assert record["pull"].startswith("skipped")
+    assert record["failed_step"] == "up"
 
 
 def test_down_only_stops_verified_demo_and_keeps_volumes(

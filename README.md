@@ -150,9 +150,11 @@ Generator defaults and the main dataset are unchanged. Existing demos made with 
 need the separately confirmed demo-only reset before switching dataset identities.
 
 Stages: `pull`, `up`, `generate`, `transform`, `load`, `reconcile`, `quality`,
-`analytics`, `dashboard-check`. Loading already refreshes metrics and runs the transactional
+`analytics`, `dashboard-check`. `pull` runs only when the pinned image digest is not cached;
+`up` never pulls. Loading already refreshes metrics and runs the transactional
 gate. Every stage reports elapsed time, stops on failure, and checks disk first; failed runs
-retain evidence and data. Results under `data/demo/run-*.json` record image-cache state,
+retain evidence and data, and name the failed stage, its command, exit code and a redacted
+stderr excerpt. Results under `data/demo/run-*.json` record image-cache state,
 whether input files existed, whether the database was empty, stage times and host free bytes.
 
 Require **13 GiB host free space before starting**: an 11 GiB cancellation threshold plus

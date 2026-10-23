@@ -4,9 +4,11 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import shutil
 import socket
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,46 @@ IMAGE = (
 )
 GIB = 1024**3
 DATASET = GeneratorConfig.create(orders=5000, seed=42, drivers=500).dataset_name()
+# Environment values that must never appear in a message or the evidence file.
+SECRET_SETTINGS = (
+    "POSTGRES_SUPERUSER_PASSWORD",
+    "DELIVERYPULSE_ETL_PASSWORD",
+    "DELIVERYPULSE_READONLY_PASSWORD",
+)
+STDERR_LINES = 12
+STDERR_CHARS = 1500
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+class CommandFailedError(RuntimeError):
+    """An external command failed; carries only sanitised, credential-free details."""
+
+    def __init__(self, command: str, exit_code: int, stderr_excerpt: str) -> None:
+        super().__init__(
+            f"command `{command}` exited {exit_code}: {stderr_excerpt or '(no stderr)'}"
+        )
+        self.command = command
+        self.exit_code = exit_code
+        self.stderr_excerpt = stderr_excerpt
+
+
+def sanitise(text: str, env: Mapping[str, str]) -> str:
+    """Remove credential values, terminal colour codes and this machine's absolute paths."""
+    for name in SECRET_SETTINGS:
+        value = env.get(name, "")
+        if value:
+            text = text.replace(value, "***")
+    text = ANSI_ESCAPE.sub("", text)
+    return text.replace(str(ROOT), ".").replace(str(Path.home()), "~")
+
+
+def stderr_excerpt(raw: bytes, env: Mapping[str, str]) -> str:
+    """The last lines of a command's stderr, sanitised and size-limited."""
+    lines = sanitise(raw.decode(errors="replace"), env).strip().splitlines()
+    excerpt = " | ".join(line.strip() for line in lines[-STDERR_LINES:] if line.strip())
+    return excerpt[-STDERR_CHARS:]
+
+
 STEPS = (
     (
         "generate",
@@ -156,7 +198,11 @@ def compose(*args: str) -> list[str]:
 
 
 async def command(args: list[str], env: dict[str, str], *, show: bool = False) -> str:
-    """Execute without a shell; suppress external error details that may contain credentials."""
+    """Execute without a shell. On failure, raise with the command and a sanitised stderr excerpt.
+
+    Credentials are passed only through the environment, never as arguments, and their values
+    are removed from any reported text (:func:`sanitise`).
+    """
     executable = shutil.which(args[0])
     if executable is None:
         raise RuntimeError(f"Required executable missing: {args[0]}")
@@ -170,7 +216,9 @@ async def command(args: list[str], env: dict[str, str], *, show: bool = False) -
     )
     stdout, stderr = await proc.communicate()
     if proc.returncode:
-        raise RuntimeError(f"Demo command failed ({args[0]}, exit {proc.returncode}); stop")
+        raise CommandFailedError(
+            sanitise(" ".join(args), env), proc.returncode, stderr_excerpt(stderr, env)
+        )
     output = stdout.decode()
     if show:
         print(output, end="", flush=True)
@@ -260,6 +308,36 @@ async def preflight(env: dict[str, str]) -> dict[str, Any]:
     return result
 
 
+def startup_commands(image_cached: bool) -> list[tuple[str, list[str]]]:
+    """The commands that start the demo database.
+
+    When the pinned digest is already cached, no registry call is made at all: there is no
+    ``pull`` step and ``up`` runs with ``--pull never``, so the demo needs no network and cannot
+    fail on a registry or credential-helper problem. Otherwise the image is pulled first and
+    ``up`` uses only what is now local. The image reference, project, file and volume are the
+    same in both cases (``validate_layout`` pins them).
+    """
+    up = ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "postgres"]
+    if image_cached:
+        return [("up", compose(*up[:1], "--pull", "never", *up[1:]))]
+    return [
+        ("pull", compose("pull", "postgres")),
+        ("up", compose(*up[:1], "--pull", "never", *up[1:])),
+    ]
+
+
+def failure_record(exc: BaseException, env: Mapping[str, str]) -> dict[str, Any]:
+    """A credential-free description of why a step failed, for the console and the evidence."""
+    if isinstance(exc, CommandFailedError):
+        return {
+            "reason": str(exc),
+            "command": exc.command,
+            "exit_code": exc.exit_code,
+            "stderr_excerpt": exc.stderr_excerpt,
+        }
+    return {"reason": sanitise(f"{type(exc).__name__}: {exc}", env)}
+
+
 async def run_demo(env: dict[str, str]) -> None:
     """Run sequentially, stop at the first failure, and save only nonsecret measurements."""
     started = time.monotonic()
@@ -273,14 +351,14 @@ async def run_demo(env: dict[str, str]) -> None:
         **context,
         "steps": {},
     }
-    timed_commands = [
-        ("pull", compose("pull", "postgres")),
-        ("up", compose("up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "postgres")),
-        *(
-            (name, ["uv", "run", "--locked", "python", "-m", module, *args])
-            for name, module, args in STEPS
-        ),
+    timed_commands = startup_commands(bool(context.get("image_cached"))) + [
+        (name, ["uv", "run", "--locked", "python", "-m", module, *args])
+        for name, module, args in STEPS
     ]
+    if context.get("image_cached"):
+        result["pull"] = "skipped: the pinned image digest is already cached locally"
+        print("Demo step pull: skipped (pinned image digest already cached)", flush=True)
+    name = "start"
     try:
         for name, args in timed_commands:
             checkpoint(name, 0.6 if name not in {"pull", "up"} else 2.0)
@@ -293,6 +371,11 @@ async def run_demo(env: dict[str, str]) -> None:
             print(f"Demo step {name}: {result['steps'][name]:.3f} s", flush=True)
         result["status"] = "passed"
         print("Demo passed; open the separate terminal with make demo-dashboard")
+    except Exception as exc:
+        result["failed_step"] = name
+        result["failure"] = failure_record(exc, env)
+        print(f"Demo step {name} failed: {result['failure']['reason']}", flush=True)
+        raise
     finally:
         result["total_seconds"] = time.monotonic() - started
         result["after_free_bytes"] = shutil.disk_usage(ROOT).free
@@ -391,11 +474,10 @@ def main() -> int:
     args = parser.parse_args()
     try:
         asyncio.run(stage(args.stage))
-    except (RuntimeError, ValueError, OSError, psycopg.Error):
-        print(
-            "Demo failed: check prerequisites, isolation, disk and local credentials; "
-            "no cleanup attempted"
-        )
+    except (RuntimeError, ValueError, OSError, psycopg.Error) as exc:
+        reason = failure_record(exc, os.environ)["reason"]
+        print(f"Demo failed: {reason}")
+        print("No cleanup attempted; the evidence file under data/demo/ records the failed step.")
         return 1
     return 0
 

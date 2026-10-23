@@ -962,10 +962,14 @@ make demo-disk
 make demo
 ```
 
-The fixed 5,000-order, 500-driver, seed-42 run performs pull, healthy startup, generation, Parquet transform,
+The fixed 5,000-order, 500-driver, seed-42 run performs pull (skipped when preflight found the
+pinned digest cached), healthy startup (`up --pull never`, so no registry call when cached),
+generation, Parquet transform,
 database load with metrics/quality gate, reconciliation, whole-database quality, analytics and
 a read-only dashboard query check. Each step prints duration. A failure prevents later steps;
-no reset/cleanup runs automatically. `data/demo/run-*.json` records status, stage/total times,
+no reset/cleanup runs automatically. The console and the evidence file name the failed step
+(`failed_step`) and `failure`: reason, command, exit code and the last stderr lines, with
+credential values, the project path and the home path redacted. `data/demo/run-*.json` records status, stage/total times,
 image/input cache state, database empty versus replay/retry, and host free bytes. A replay
 keeps business counts unchanged but may add quality audit rows. Unknown dataset identity or
 unattributed existing rows is an error, not an invitation to reset anything automatically.
