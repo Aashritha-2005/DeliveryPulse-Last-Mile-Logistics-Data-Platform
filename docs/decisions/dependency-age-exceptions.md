@@ -1,0 +1,45 @@
+# Dependency-age exceptions
+
+The project normally adopts a release only once it is at least 14 days old. On 2026-10-24 the
+Security workflow failed on advisories whose only fixes were newer than that, so the owner
+accepted the releases below early. Hiding the findings was rejected: there is no ignore list,
+and no scanner was weakened. Ages are counted to 2026-10-24 from the first PyPI upload or the
+image push.
+
+| Package or image | Change | Advisory | Upload / push (UTC) | Age | Would have become eligible |
+|---|---|---|---|---|---|
+| certifi | 2026.7.22 → 2026.10.19 | GHSA-6q48-6c7w-9gw2 (alias PYSEC-2026-4320), critical: bundled emSign roots whose intermediates had leaked keys; fixed in 2026.10.19 | 2026-10-20 | 4 days | 2026-11-03 |
+| pillow (streamlit dependency) | 12.3.0 → 13.0.0 | About 34 advisories reported by pip-audit and Trivy against 12.3.0, fixed in 13.0.0; no 12.x backport exists | 2026-10-16 | 8 days | 2026-10-30 |
+| streamlit | 1.64.0 → 1.66.1 | None of its own: 1.66.1 is the first release allowing pillow 13 (`pillow<14`); 1.64.0 to 1.66.0 cap it at `<13` | 2026-10-21 | 3 days | 2026-11-04 |
+| `python:3.12.15-slim-trixie` (pipeline image base) | 3.12.14 → 3.12.15, index digest `sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704` | Debian base-package findings (pcre2, openssl) in the image scan; the 3.12.14 tag has had no rebuild since 2026-09-25 | 2026-10-22 (image created 2026-10-21) | 2 days | 2026-11-05 |
+
+**Reasons.**
+- certifi changes only the bundled CA certificates, so a regression is unlikely, and the
+  advisory is critical.
+- Pillow is not imported by project code; the dashboard uses no image functions. The advisories
+  still apply to the locked version, and the only fix needs a newer streamlit.
+- The base image stays on Python 3.12, so the version policy holds. The scan after the rebuild
+  decides whether its Debian findings are resolved.
+- Waiting would have kept the Security workflow red for up to 12 days without reducing risk.
+
+**Effect of the upgrade.** streamlit 1.66.1 no longer requires `toml` or `httptools`, so both
+left the lock. No other locked version changed.
+
+**Verification (2026-10-24, local).**
+- **uv:** a dry run before writing the lock listed exactly the three updates and two removals.
+- **Dependency audit:** 86 locked packages, no known vulnerabilities.
+- **Other checks:** bandit, secret scan, lint and strict type checks are clean. Tests: 639 unit
+  and 163 PostgreSQL integration, with combined coverage of 84.30%.
+- **Dashboard:** its query check passed as the read-only role. A headless server answered its
+  health check, and a live render showed no exceptions.
+- **Breaking changes:** none in the streamlit 1.66 or pillow 13 release notes affects this
+  project. That covers dropped Python 3.10, custom-CSS selectors, `secrets.toml` errors and
+  removed Pillow image APIs: the project uses Python 3.12, no custom CSS and no secrets file,
+  and never imports Pillow.
+
+**Not yet verified.** Trivy is not part of the local toolchain. The rebuilt pipeline image is
+checked by the Security workflow's image scan, and its Debian findings are recorded here only
+from that scan's output.
+
+**Review.** Each of these releases is ordinary from its eligibility date. Newer releases, such
+as certifi 2026.10.23, still follow the 14-day rule.

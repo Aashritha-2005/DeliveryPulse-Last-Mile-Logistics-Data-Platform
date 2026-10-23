@@ -13,7 +13,9 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "pyarrow>=17.0",
     "python-dotenv>=1.0",
-    "streamlit==1.64.0",
+    # 1.66.1 is the first release allowing pillow 13 (security fix); accepted under 14 days old,
+    # see docs/decisions/dependency-age-exceptions.md.
+    "streamlit==1.66.1",
 ]
 
 [dependency-groups]

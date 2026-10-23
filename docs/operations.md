@@ -1092,7 +1092,7 @@ identify them by the repository and pinned digest in the project configuration.
 | `deliverypulse-airflow:3.3.2` and `apache/airflow:3.3.2-python3.12` | `make airflow-build` rebuilds the project image, pulling the pinned base when needed. |
 | `deliverypulse-pipeline:<content-derived tag>` | `make k8s-build` rebuilds it; `make k8s-load` loads it into the cluster. Use the guarded `make k8s-host-image-clean` while the verified node copy still exists. |
 | `kindest/node:v1.37.0` | After its cluster is deleted, the unused image can be removed; `make k8s-up` pulls the pinned digest again. |
-| `python:3.12.14-slim-trixie` and `ghcr.io/astral-sh/uv:0.13.0` | `make k8s-build` pulls the pinned build images again; `make airflow-build` also uses the pinned uv image. |
+| `python:3.12.15-slim-trixie` and `ghcr.io/astral-sh/uv:0.13.0` | `make k8s-build` pulls the pinned build images again; `make airflow-build` also uses the pinned uv image. |
 
 Compose volumes hold persistent data and service configuration. Remove them only through
 the documented service-specific reset commands and their data-loss warnings, never for
@@ -1139,7 +1139,9 @@ absolute paths. Preflight prints and enforces v1.37.x/v0.33.x. Docker Desktop's 
 kubectl v1.36.1 does not pass. The approved node image is
 `kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`;
 the runtime base is
-`python:3.12.14-slim-trixie@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f`.
+`python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704`
+(changed from 3.12.14 on 2026-10-24 for Debian security fixes; see
+[dependency-age exceptions](decisions/dependency-age-exceptions.md)).
 Both are manifest-index pins for amd64/arm64. No dependency installation is required beyond
 the existing locked project environment.
 
