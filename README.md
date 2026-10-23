@@ -36,7 +36,7 @@ These numbers are not predictions for the 5,000-order quick start.
 | pandas/Spark crossover | About 1M orders: 43.374 / 40.919 s on the benchmark subset |
 | Parquet read layouts | Single / partitioned: pandas 0.851 / 1.28 s; Spark 8.473 / 8.442 s. No useful gain on this workload |
 | Coverage | Combined unit/PostgreSQL result on 2026-10-24: **84.30%** ([record](docs/benchmarks.md#test-coverage)); optional live suites and `scripts/` are outside this `src/` figure |
-| CI | Tests green on `86ecbf0`. Security was red on `86ecbf0` because new pillow and certifi advisories had been published; the fix is in `9c6ffc2`, whose CI result is not yet recorded here. The badges link to live workflow status |
+| CI | Security was red on `86ecbf0` after new pillow and certifi advisories were published; the fix landed in `9c6ffc2`. Tests green on `9c6ffc2` (run #17) and `1e4f2ec` (#20). Security green on `9c6ffc2` (#18) and `1e4f2ec` (#21), including the pipeline image scan (user-reported, 2026-10-24). The badges link to live workflow status |
 
 Sources: [artifact provenance and batch results](docs/benchmarks.md#batch-evidence-and-read-only-artifact-audit),
 [data-quality report](docs/data_quality_report.md), [scale measurements](docs/benchmarks.md#2-scale-benchmark-pandas-vs-pyspark).

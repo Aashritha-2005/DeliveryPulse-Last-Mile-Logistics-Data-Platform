@@ -37,9 +37,13 @@ left the lock. No other locked version changed.
   removed Pillow image APIs: the project uses Python 3.12, no custom CSS and no secrets file,
   and never imports Pillow.
 
-**Not yet verified.** Trivy is not part of the local toolchain. The rebuilt pipeline image is
-checked by the Security workflow's image scan, and its Debian findings are recorded here only
-from that scan's output.
+**CI verification (user-reported, 2026-10-24).** The Security workflow passed on commit
+`9c6ffc2` (run #18) and on `1e4f2ec` (run #21), including the pipeline image build and scan;
+the Tests workflow passed on both (runs #17 and #20). The image scan gates on fixable HIGH and
+CRITICAL findings, so its pass means none remained in the rebuilt image. That covers the pcre2
+and openssl findings that failed on `86ecbf0`. The individual scan rows were not reviewed, so
+no Debian CVE IDs are recorded here. Unfixed findings are outside the gate, and this pass
+does not show that the image has none.
 
 **Review.** Each of these releases is ordinary from its eligibility date. Newer releases, such
 as certifi 2026.10.23, still follow the 14-day rule.
