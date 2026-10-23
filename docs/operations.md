@@ -666,7 +666,7 @@ avoid anonymous volumes; this standalone deployment does not run a sharded confi
 Both persist across `make mongo-down`. Each container has a 768 MiB limit and a 0.25 GiB
 WiredTiger cache; bootstrap and the main server must never open the volume simultaneously.
 These are configured limits, not measured usage. Bootstrap also runs mongod, so it needs the
-same memory limit rather than the roadmap's proposed 256 MiB client-only allowance.
+same memory limit as the main server; a small client-only allowance would not be enough.
 
 For diagnostics, run `make mongo-logs`; for a normal stop, run `make mongo-down`.
 Do not delete volumes to troubleshoot without first reviewing the failure. Any deliberate

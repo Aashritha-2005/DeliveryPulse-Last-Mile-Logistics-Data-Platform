@@ -497,8 +497,8 @@ runs. CI configuration is prepared; its new Kafka job has not yet been run on Gi
 One session on the same 16 GiB Apple Silicon machine: macOS 26.6.2 arm64, 10 logical CPUs.
 MongoDB Community 8.0.32, PyMongo 4.18.2 and dnspython 2.8.0; the image tag and confirmed
 multi-platform digest are in `docker-compose.mongo.yml`. Dataset:
-`seed-42_orders-50000_cfg-449e309b`, three batches, **441,222 raw delivery-event rows**.
-The roadmap's approximate 540,000 event-document estimate did not match the actual input.
+`seed-42_orders-50000_cfg-449e309b`, three batches, **441,222 raw delivery-event rows**, one
+document per raw row.
 Full machine-readable results and plans: [mongo-2026-10-15.json](benchmarks/mongo-2026-10-15.json).
 
 Commands, in order, with the user-started server already healthy:

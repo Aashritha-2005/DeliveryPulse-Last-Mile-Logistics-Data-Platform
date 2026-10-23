@@ -25,6 +25,8 @@ These numbers are not predictions for the 5,000-order quick start.
 | Production batch input | 50,484 order rows, 441,222 delivery-event rows, 48,997 shift-event rows and 833 driver rows across three batches; 50,000 generated orders |
 | Accepted business data | 49,450 orders and 439,822 delivery events |
 | Rejected records | 1,355, retained with reasons |
+| Duplicates removed | 1,000: 350 orders, 600 delivery events, 50 shift events; plus 100 stale order versions ignored ([per source and batch](docs/data_quality_report.md)) |
+| End-to-end runtime | Not measured as one run for the 50,000-order dataset; only stages were timed (transformation ~30 s, load with quality gate 121.88 s). The one measured end-to-end run is the earlier 5,000-order, 83-driver demo: 40.106 s with a cached image; the current 500-driver demo has not been timed ([details](docs/benchmarks.md#isolated-core-demo-acceptance-pending)) |
 | Reconciliation | 4,395 manifest cases; every source/batch balances accepted + rejected + duplicate + stale + pending |
 | Quality | 35 check definitions produce 50 results; whole-database run: zero blocking failures and warnings; 25/25 case types detected |
 | Replay and recovery | Repeated batches preserve business data; failed-batch rollback/retry and late/orphan handling covered by integration tests |
