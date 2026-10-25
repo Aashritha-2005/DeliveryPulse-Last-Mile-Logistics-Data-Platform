@@ -36,7 +36,7 @@ bench = [
     "pyspark==4.2.0",
 ]
 streaming = [
-    "confluent-kafka==2.15.1",
+    "confluent-kafka==2.16.0",
 ]
 nosql = [
     # dnspython pinned: newer releases fail the 14-day rule when added (2026-10-15).
