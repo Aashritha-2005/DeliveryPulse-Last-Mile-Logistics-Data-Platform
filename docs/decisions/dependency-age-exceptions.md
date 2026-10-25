@@ -2,9 +2,10 @@
 
 The project normally adopts a release only once it is at least 14 days old. On 2026-10-24 the
 Security workflow failed on advisories whose only fixes were newer than that, so the owner
-accepted the releases below early. Hiding the findings was rejected: there is no ignore list,
-and no scanner was weakened. Ages are counted to 2026-10-24 from the first PyPI upload or the
-image push.
+accepted the releases below early. Hiding the findings was rejected: no dependency finding is
+on an ignore list, and no scanner was weakened. (The only Trivy exception is a configuration
+check, AWS-0132, recorded in [aws.md](aws.md).) Ages are counted to 2026-10-24 from the first
+PyPI upload or the image push.
 
 | Package or image | Change | Advisory | Upload / push (UTC) | Age | Would have become eligible |
 |---|---|---|---|---|---|
@@ -45,5 +46,25 @@ and openssl findings that failed on `86ecbf0`. The individual scan rows were not
 no Debian CVE IDs are recorded here. Unfixed findings are outside the gate, and this pass
 does not show that the image has none.
 
-**Review.** Each of these releases is ordinary from its eligibility date. Newer releases, such
-as certifi 2026.10.23, still follow the 14-day rule.
+## filelock 4.2.1 (accepted 2026-10-25)
+
+On commit `02f60d1` the dependency audit failed on six filelock advisories published
+2026-10-23, all fixed only in 4.2.1. Age is counted to 2026-10-25.
+
+| Package | Change | Advisory | Upload (UTC) | Age | Would have become eligible |
+|---|---|---|---|---|---|
+| filelock (dependency of `cachecontrol`, used by `pip-audit`) | 4.1.1 → 4.2.1 | CVE-2026-112906, CVE-2026-112907, CVE-2026-112913, CVE-2026-112914, CVE-2026-112937, CVE-2026-112940 (GHSA-v4x8-3wr5-3wq8, High 7.1: affected 3.20.4 to 4.2.0, fixed in 4.2.1) | 2026-10-17 | 8 days | 2026-10-31 |
+
+**Reason.**
+- filelock is reached only through the dev-group security tool `pip-audit`. It is not in the
+  runtime, the dashboard or the pipeline image.
+- The fix is the only release that clears the advisories.
+- Waiting would have kept the Security workflow red for six days.
+
+**Effect.** The dry run and the real `uv lock --upgrade-package filelock==4.2.1` both printed
+only `filelock v4.1.1 -> v4.2.1`; no other locked version changed.
+
+## Review
+
+Each of these releases is ordinary from its eligibility date. Newer releases, such as certifi
+2026.10.23 and filelock 4.2.4, still follow the 14-day rule.
