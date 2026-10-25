@@ -76,13 +76,22 @@ class DatabaseSettings:
 
 @dataclass(frozen=True)
 class S3Settings:
-    """S3-compatible object-store settings for one role. The keys are excluded from repr."""
+    """S3-compatible object-store settings for one role. The keys are excluded from repr.
+
+    Against AWS (``aws_mode``) both keys are ``None``: credentials then come only from the
+    standard AWS chain in the shell (``aws login`` profile), never from ``.env``.
+    """
 
     endpoint_url: str | None
     bucket: str
     region: str
-    access_key_id: str = field(repr=False)
-    secret_access_key: str = field(repr=False)
+    access_key_id: str | None = field(repr=False)
+    secret_access_key: str | None = field(repr=False)
+
+    @property
+    def aws_mode(self) -> bool:
+        """True when these settings point at AWS rather than the local S3-compatible store."""
+        return self.endpoint_url is None or AWS_ENDPOINT_MARKER in self.endpoint_url
 
 
 def read_environment(env_file: Path = DEFAULT_ENV_FILE) -> dict[str, str]:
@@ -170,8 +179,9 @@ def load_s3_settings(role: S3Role = "pipeline", *, env_file: Path = DEFAULT_ENV_
 
     Local development points ``S3_ENDPOINT_URL`` at the local S3-compatible store. An empty
     endpoint (the AWS default) or an Amazon endpoint is refused unless ``S3_ALLOW_AWS=true``,
-    which needs explicit approval. Swapping to AWS S3 is otherwise only a change of these
-    settings.
+    which needs explicit approval. Against AWS the ``S3_*`` access keys are ignored: the
+    long-lived local keys in ``.env`` must never be sent to AWS, and AWS credentials come only
+    from the shell's short-lived ``aws login`` session (see :mod:`src.lake.aws`).
 
     Raises:
         ConfigError: if a setting is missing, still a placeholder, invalid, or points at AWS
@@ -188,11 +198,14 @@ def load_s3_settings(role: S3Role = "pipeline", *, env_file: Path = DEFAULT_ENV_
     bucket = _require(values, "S3_BUCKET")
     if not S3_BUCKET_PATTERN.fullmatch(bucket):
         raise ConfigError("S3_BUCKET must be 3-63 lowercase letters, digits or hyphens.")
+    region = values.get("S3_REGION", "").strip() or DEFAULT_S3_REGION
+    if pointing_at_aws:
+        return S3Settings(endpoint_url, bucket, region, access_key_id=None, secret_access_key=None)
     key_variable, secret_variable = _S3_CREDENTIALS[role]
     return S3Settings(
         endpoint_url=endpoint_url,
         bucket=bucket,
-        region=values.get("S3_REGION", "").strip() or DEFAULT_S3_REGION,
+        region=region,
         access_key_id=_require_secret(values, key_variable),
         secret_access_key=_require_secret(values, secret_variable),
     )

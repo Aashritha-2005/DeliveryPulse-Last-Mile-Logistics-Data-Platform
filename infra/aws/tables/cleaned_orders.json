@@ -1,0 +1,16 @@
+[
+  {"name": "order_id", "type": "string"},
+  {"name": "customer_id", "type": "string"},
+  {"name": "driver_id", "type": "string"},
+  {"name": "order_created_ts", "type": "timestamp"},
+  {"name": "pickup_ts", "type": "timestamp"},
+  {"name": "delivery_ts", "type": "timestamp"},
+  {"name": "promised_ts", "type": "timestamp"},
+  {"name": "distance_km", "type": "decimal(7,3)"},
+  {"name": "status", "type": "string"},
+  {"name": "city", "type": "string"},
+  {"name": "fare_amount", "type": "decimal(10,2)"},
+  {"name": "source_updated_at", "type": "timestamp"},
+  {"name": "delivery_minutes", "type": "double"},
+  {"name": "is_late", "type": "boolean"}
+]

@@ -384,6 +384,32 @@ test-s3:
 	bash scripts/s3_env_check.sh
 	$(UV_RUN) pytest -m s3
 
+# ---------------------------------------------------------------- AWS proof (Step 17) ---
+# The owner runs these with short-lived `aws login` credentials (AWS_PROFILE) and passes
+# S3_ALLOW_AWS=true on the command line; it is never stored. S3_ENDPOINT_URL is emptied here
+# so the local store's endpoint in .env cannot leak into an AWS run. Runbook: infra/aws/README.md.
+AWS_PROOF_ENV = S3_ENDPOINT_URL=
+AWS_DEMO_DB_ENV = POSTGRES_PORT=$${DEMO_PORT:-55432} POSTGRES_DB=deliverypulse_demo
+.PHONY: tf-fmt aws-preflight aws-negative-check aws-export aws-athena aws-verify-teardown
+
+tf-fmt:
+	terraform -chdir=infra/aws fmt -recursive
+
+aws-preflight:
+	$(AWS_PROOF_ENV) $(UV_RUN) python -m src.lake.aws_check preflight
+
+aws-negative-check:
+	$(AWS_PROOF_ENV) $(UV_RUN) python -m src.lake.aws_check negative
+
+aws-export:
+	$(AWS_PROOF_ENV) $(AWS_DEMO_DB_ENV) $(UV_RUN) python -m src.lake.export --raw-dir data/demo/raw --processed-dir data/demo/processed
+
+aws-athena:
+	$(AWS_PROOF_ENV) $(AWS_DEMO_DB_ENV) $(UV_RUN) python -m src.lake.athena
+
+aws-verify-teardown:
+	$(AWS_PROOF_ENV) $(UV_RUN) python -m src.lake.aws_check teardown
+
 test-spark:
 	@$(REQUIRE_JAVA_21)
 	JAVA_HOME="$(JAVA_21)" $(UV_RUN) --group bench pytest -m spark

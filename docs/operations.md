@@ -1123,6 +1123,16 @@ again instead of treating Docker's reclaimed-byte total as immediately available
 | `make quality-report`: `load-time quality results exist for batches ...` | Some batches were loaded before the quality framework existed, or failed; reset and load again |
 | Container fails at start with a permission or `chown` error | The capability set is too tight for this Docker version: `docker compose --profile core logs postgres` and report the error |
 
+## AWS proof (Step 17, owner-run)
+
+The one-off Sydney proof (S3 export, one Athena query, verified teardown) has its own runbook:
+[infra/aws/README.md](../infra/aws/README.md). The owner runs every `terraform` and `aws`
+command with short-lived `aws login` credentials; CI only checks formatting and validates the
+configuration. The `make aws-*` targets refuse to run unless `S3_ALLOW_AWS=true` is given on
+the command line, the region is `ap-southeast-2` and the credentials carry a session token.
+`make aws-export` also refuses when the database does not hold exactly the orders of the
+exported dataset; the same guard now protects `make lake-export`.
+
 ## Local Kubernetes staged runbook
 
 Local replay and live tests passed against an already populated database: 0 batches loaded,

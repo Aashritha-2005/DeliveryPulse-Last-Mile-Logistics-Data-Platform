@@ -9,6 +9,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.config import DEFAULT_S3_REGION, S3Settings
+from src.lake.aws import aws_session
 
 # Errors of any S3 call: a service answer (ClientError) or a client-side failure such as an
 # unreachable endpoint (BotoCoreError). Their messages name the operation, never a key.
@@ -46,7 +47,20 @@ class LakeS3Error(RuntimeError):
 
 
 def create_client(settings: S3Settings) -> S3Client:
-    """A boto3 S3 client for ``settings`` (path-style addressing, SigV4)."""
+    """A boto3 S3 client for ``settings`` (SigV4).
+
+    Locally: path-style addressing with the ``.env`` key. On AWS: virtual-hosted addressing
+    (path-style is deprecated there) and the shell's short-lived session, never a stored key.
+    """
+    if settings.aws_mode:
+        session = aws_session(settings.region)
+        return cast(
+            S3Client,
+            session.client(
+                "s3",
+                config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
+            ),
+        )
     return cast(
         S3Client,
         boto3.client(

@@ -1,0 +1,52 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LocateAndListTheLakeBucket",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+      "Resource": "${bucket_arn}"
+    },
+    {
+      "Sid": "ReadWriteTheFourLakePrefixes",
+      "Effect": "Allow",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:ListMultipartUploadParts",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "${bucket_arn}/raw/*",
+        "${bucket_arn}/cleaned/*",
+        "${bucket_arn}/aggregated/*",
+        "${bucket_arn}/athena-results/*"
+      ]
+    },
+    {
+      "Sid": "QueryInTheProofWorkgroupOnly",
+      "Effect": "Allow",
+      "Action": [
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:GetWorkGroup",
+        "athena:StartQueryExecution",
+        "athena:StopQueryExecution"
+      ],
+      "Resource": "${workgroup_arn}"
+    },
+    {
+      "Sid": "ReadTheProofCatalogOnly",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase",
+        "glue:GetPartition",
+        "glue:GetPartitions",
+        "glue:GetTable",
+        "glue:GetTables"
+      ],
+      "Resource": ["${glue_catalog_arn}", "${glue_database_arn}", "${glue_table_arn}"]
+    }
+  ]
+}

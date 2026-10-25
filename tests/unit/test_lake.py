@@ -391,7 +391,7 @@ def test_export_needs_an_existing_bucket(lake: list[LakeObject]) -> None:
     client = FakeS3()
     client.buckets.clear()
 
-    with pytest.raises(LakeExportError, match="run make s3-up"):
+    with pytest.raises(LakeExportError, match="create it first.*make s3-up"):
         export_lake(client, BUCKET, lake)
     assert client.objects == {}
 
@@ -461,7 +461,7 @@ def test_bootstrap_creates_the_bucket_with_the_admin_key(
 
     def settings(role: str) -> Any:
         roles.append(role)
-        return type("S", (), {"bucket": BUCKET, "region": "us-east-1"})()
+        return type("S", (), {"bucket": BUCKET, "region": "us-east-1", "aws_mode": False})()
 
     monkeypatch.setattr(bootstrap, "load_s3_settings", settings)
     monkeypatch.setattr(bootstrap, "create_client", lambda _settings: client)
@@ -482,7 +482,7 @@ def test_bootstrap_reports_s3_errors_on_one_line(
     monkeypatch.setattr(
         bootstrap,
         "load_s3_settings",
-        lambda role: type("S", (), {"bucket": BUCKET, "region": "us-east-1"})(),
+        lambda role: type("S", (), {"bucket": BUCKET, "region": "us-east-1", "aws_mode": False})(),
     )
     monkeypatch.setattr(bootstrap, "create_client", lambda _settings: client)
 

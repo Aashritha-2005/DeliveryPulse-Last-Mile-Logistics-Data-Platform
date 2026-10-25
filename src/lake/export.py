@@ -34,6 +34,7 @@ import pyarrow.parquet as pq
 from src.config import ConfigError, load_database_settings, load_s3_settings
 from src.contract import SOURCE_COLUMNS, SOURCE_FILES, format_reporting_date
 from src.database.postgres_state import Connection
+from src.lake.aws import AwsProofError, redact, require_aws_settings
 from src.lake.s3 import (
     S3_ERRORS,
     LakeS3Error,
@@ -240,6 +241,34 @@ def read_aggregates(conn: Connection) -> dict[str, list[dict[str, Any]]]:
     return aggregates
 
 
+def cleaned_order_ids(cleaned_dir: Path) -> set[str]:
+    """Every ``order_id`` in the cleaned orders Parquet of one dataset."""
+    paths = sorted((cleaned_dir / "orders").rglob("*.parquet"))
+    if not paths:
+        raise LakeExportError(f"No cleaned orders under {cleaned_dir}; run make transform.")
+    ids: set[str] = set()
+    for path in paths:
+        ids.update(pq.read_table(path, columns=["order_id"]).column("order_id").to_pylist())
+    return ids
+
+
+def check_dataset_identity(conn: Connection, cleaned_dir: Path) -> None:
+    """Refuse to export unless the database holds exactly the orders of these cleaned files.
+
+    The aggregated layer is read from the database while the raw and cleaned layers come from
+    files, so a database loaded with another dataset would silently mix two datasets in one
+    lake. ``analytics.orders`` is readable by the read-only role; ``audit`` is not.
+    """
+    files = cleaned_order_ids(cleaned_dir)
+    database = {str(row[0]) for row in conn.execute("SELECT order_id FROM analytics.orders")}
+    if database != files:
+        raise LakeExportError(
+            f"The database holds a different dataset than {cleaned_dir.parent.name}: "
+            f"{len(database)} orders in the database, {len(files)} in the cleaned files, "
+            f"{len(database ^ files)} differ. Export from the database loaded with this dataset."
+        )
+
+
 def build_lake(
     dataset_dir: Path, cleaned_dir: Path, aggregates: AggregateRows, prefix: str = ""
 ) -> Iterator[LakeObject]:
@@ -278,7 +307,10 @@ def export_lake(
     """
     validate_prefix(prefix)
     if not bucket_exists(client, bucket):
-        raise LakeExportError(f"Bucket {bucket!r} does not exist; run make s3-up to create it.")
+        raise LakeExportError(
+            f"Bucket {bucket!r} does not exist; create it first "
+            "(make s3-up locally, terraform apply for the AWS proof)."
+        )
     uploaded: list[S3Object] = []
     rows = 0
     for item in objects:
@@ -299,17 +331,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         settings = load_s3_settings("pipeline")
+        if settings.aws_mode:
+            require_aws_settings(settings)
         dataset_dir = resolve_dataset(args.raw_dir, args.dataset)
+        cleaned_dir = args.processed_dir / dataset_dir.name / "cleaned"
         database = load_database_settings("readonly")
         with psycopg.connect(database.conninfo(), autocommit=True) as conn:
+            check_dataset_identity(conn, cleaned_dir)
             aggregates = read_aggregates(conn)
-        cleaned_dir = args.processed_dir / dataset_dir.name / "cleaned"
         objects = build_lake(dataset_dir, cleaned_dir, aggregates)
         result = export_lake(create_client(settings), settings.bucket, objects)
     except S3_ERRORS as exc:
-        print(f"ERROR: S3 request failed: {exc}", file=sys.stderr)
+        print(f"ERROR: S3 request failed: {redact(str(exc))}", file=sys.stderr)
         return 1
     except (
+        AwsProofError,
         BatchSchemaError,
         ConfigError,
         LakeExportError,

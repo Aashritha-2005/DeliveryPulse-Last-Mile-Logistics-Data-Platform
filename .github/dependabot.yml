@@ -46,3 +46,12 @@ updates:
     cooldown:
       default-days: 14
     open-pull-requests-limit: 5
+
+  # Provider pins of the one-off AWS proof (infra/aws).
+  - package-ecosystem: terraform
+    directory: /infra/aws
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5

@@ -18,6 +18,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.parse_args(argv)
     try:
         settings = load_s3_settings("admin")
+        if settings.aws_mode:
+            raise ConfigError("On AWS the bucket is created by Terraform (infra/aws), not here.")
         created = create_bucket(create_client(settings), settings.bucket, settings.region)
     except S3_ERRORS as exc:
         print(f"ERROR: S3 request failed: {exc}", file=sys.stderr)

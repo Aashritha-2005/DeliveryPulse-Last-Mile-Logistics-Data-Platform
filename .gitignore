@@ -27,9 +27,14 @@ htmlcov/
 coverage.xml
 
 # --- Terraform state ---
+# State and plans contain the account ID and resource ARNs; .terraform.lock.hcl is committed.
 *.tfstate
 *.tfstate.*
 .terraform/
+.terraform.tfstate.lock.info
+*.tfplan
+*.tfvars
+crash.log
 
 # --- OS / editor ---
 .DS_Store
