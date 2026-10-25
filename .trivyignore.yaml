@@ -1,0 +1,16 @@
+# Trivy exceptions for the gating filesystem scan (.github/workflows/security.yml).
+#
+# Exactly one exception, scoped to one check in one file. Do not add entries or widen paths:
+# tests/unit/test_aws_proof.py fails if any other ID, path or section appears here.
+#
+# AWS-0132 (S3 encryption should use a customer-managed KMS key), infra/aws/main.tf only.
+# Accepted 2026-10-25 by the project owner. The AWS proof bucket uses SSE-S3 (AES-256, keys
+# managed by S3) on purpose: a customer-managed KMS key is billed monthly plus per request, and
+# the proof runs on the AWS Free plan where nothing may be paid. Data at rest is still
+# encrypted, the bucket is private (Block Public Access) and TLS-only, objects expire after
+# 7 days, and the bucket is destroyed after the proof. Reason recorded in docs/decisions/aws.md.
+misconfigurations:
+  - id: AWS-0132
+    paths:
+      - "infra/aws/main.tf"
+    statement: "SSE-S3 instead of a paid customer-managed KMS key; Free plan, 7-day data, destroyed after the proof (docs/decisions/aws.md)"

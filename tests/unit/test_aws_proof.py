@@ -229,3 +229,36 @@ def test_athena_query_file_is_read_only_sql() -> None:
 
     assert body.lstrip().upper().startswith("SELECT")
     assert not re.search(r"\b(INSERT|DELETE|DROP|CREATE|ALTER|UNLOAD)\b", body.upper())
+
+
+TRIVY_IGNORE = PROJECT_ROOT / ".trivyignore.yaml"
+
+
+def trivy_ignore_lines() -> list[str]:
+    """The ignore file without comments and blank lines."""
+    lines = TRIVY_IGNORE.read_text(encoding="utf-8").splitlines()
+    return [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
+
+
+def test_trivy_ignores_only_aws_0132_on_main_tf() -> None:
+    lines = trivy_ignore_lines()
+
+    sections = [line for line in lines if not line.startswith(" ")]
+    ids = re.findall(r"^\s*-\s*id:\s*(\S+)\s*$", "\n".join(lines), re.MULTILINE)
+    path_lines = [line for line in lines if line.startswith("      - ")]
+    paths = [line.strip().removeprefix("- ").strip('"') for line in path_lines]
+    assert sections == ["misconfigurations:"]
+    assert ids == ["AWS-0132"]
+    assert paths == ["infra/aws/main.tf"]
+    assert sum(1 for line in lines if line.strip().startswith("paths:")) == 1
+    assert any(line.strip().startswith("statement:") for line in lines)
+
+
+def test_trivy_ignore_has_no_other_ignore_file_and_is_wired_to_the_gate() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "security.yml").read_text(encoding="utf-8")
+
+    assert not (PROJECT_ROOT / ".trivyignore").exists()
+    assert workflow.count("trivyignores:") == 1
+    assert "trivyignores: .trivyignore.yaml" in workflow
+    decision = (PROJECT_ROOT / "docs" / "decisions" / "aws.md").read_text(encoding="utf-8")
+    assert "AWS-0132" in decision

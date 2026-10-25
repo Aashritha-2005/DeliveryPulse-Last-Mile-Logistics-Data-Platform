@@ -123,6 +123,8 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           format: table
+          # One owner-approved exception (AWS-0132 on infra/aws/main.tf only); see the file.
+          trivyignores: .trivyignore.yaml
       - name: PostgreSQL image scan (report only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
