@@ -41,7 +41,7 @@ streaming = [
 nosql = [
     # dnspython pinned: newer releases fail the 14-day rule when added (2026-10-15).
     "dnspython==2.8.0",
-    "pymongo==4.18.2",
+    "pymongo==4.18.3",
 ]
 
 [tool.uv]
