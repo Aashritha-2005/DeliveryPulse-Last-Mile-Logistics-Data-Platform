@@ -70,8 +70,21 @@ export AWS_PROFILE=dp-pipeline
 aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/<account>/'
 ```
 
-Expected: `arn:aws:sts::<account>:assumed-role/deliverypulse-proof-pipeline/...`. If the CLI
-cannot use the `aws login` profile as `source_profile`, stop and report the error.
+Expected: `arn:aws:sts::<account>:assumed-role/deliverypulse-proof-pipeline/...`.
+
+The project's Python AWS library cannot read an `aws login` profile without the extra
+`botocore[crt]` package (error: `Using the login credential provider requires an additional
+dependency`). Instead of adding it, let the CLI hand this shell the role's temporary
+credentials. They last at most one hour and are never written to a file; never print them on
+their own:
+
+```bash
+eval "$(aws configure export-credentials --profile dp-pipeline --format env)"
+unset AWS_PROFILE
+```
+
+If a later step reports `ExpiredToken`, run `export AWS_PROFILE=dp-pipeline` and repeat both
+lines.
 
 ## 4. Permission checks (pipeline role)
 
@@ -104,13 +117,24 @@ Then stop the demo database: `make demo-down`.
 
 ## 6. Teardown (project login)
 
+First remove the pipeline role's credentials from the shell, or Terraform would use them (the
+pipeline role may not delete anything):
+
 ```bash
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_CREDENTIAL_EXPIRATION
 export AWS_PROFILE=deliverypulse
 cd ~/DeliveryPulse/infra/aws
 terraform plan -destroy -out=destroy.tfplan
+```
+
+Continue only if the plan says `0 to add, 0 to change, 12 to destroy`:
+
+```bash
 terraform apply destroy.tfplan
 terraform state list
 cd ~/DeliveryPulse
+eval "$(aws configure export-credentials --profile deliverypulse --format env)"
+unset AWS_PROFILE
 S3_ALLOW_AWS=true make aws-verify-teardown
 ```
 
@@ -118,8 +142,12 @@ S3_ALLOW_AWS=true make aws-verify-teardown
 `all checks passed` (bucket, workgroup, Glue database and role absent; nothing tagged
 `project=deliverypulse-aws-proof` left in the region). The budget and the account are kept.
 
-Afterwards, remove the `dp-pipeline` profile from `~/.aws/config` and delete the local state
-and plan files in `infra/aws/` (`terraform.tfstate*`, `*.tfplan`, `.terraform/`).
+Afterwards, clear the credentials and names from the shell, remove the `dp-pipeline` profile
+from `~/.aws/config`, and delete the local state and plan files in `infra/aws/`
+(`terraform.tfstate*`, `*.tfplan`, `.terraform/`). Keep `.terraform.lock.hcl`: it is committed.
+
+The first run (2026-10-28) followed exactly these steps; its results are in
+[docs/benchmarks.md](../../docs/benchmarks.md#5-aws-proof-s3-export-and-one-athena-query-2026-10-28).
 
 ## 7. Cost (24-48 hours later)
 

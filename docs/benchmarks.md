@@ -650,6 +650,46 @@ disk [estimate, excluding image storage]**; the server's **768 MiB** limit is co
 not a promise of workload capacity. Keep heavy profiles separate. CI configuration is locally
 validated; the new MongoDB job still requires a real GitHub run.
 
+## 5. AWS proof: S3 export and one Athena query (2026-10-28)
+
+**Run:** one-off, owner-run, in ap-southeast-2 (Sydney) on an AWS Free plan account. Runbook:
+[infra/aws/README.md](../infra/aws/README.md). Terraform 1.16.5, hashicorp/aws 6.68.0,
+hashicorp/random 3.9.1. Dataset: the 5,000-order demo `seed-42_orders-5000_cfg-4e94aafb`.
+Credentials were short-lived only (`aws login`, then the pipeline role's temporary
+credentials); no access key was created.
+
+| Step | Exact result |
+|---|---|
+| `terraform plan` | `Plan: 12 to add, 0 to change, 0 to destroy.` |
+| `terraform apply` | `Apply complete! Resources: 12 added, 0 changed, 0 destroyed.` |
+| `make aws-preflight` (pipeline role) | 6 PASS: role `deliverypulse-proof-pipeline`, ap-southeast-2, temporary credentials, bucket reachable, workgroup enforced with `per-query cutoff=104857600 bytes`, Glue table present |
+| `make aws-negative-check` | 5 PASS, all denied: list all buckets, the `primary` workgroup, list Glue databases, list IAM roles, write outside the four lake prefixes |
+| `make aws-export` | `objects=118 rows=168257 bytes=7682232 stale_deleted=0` (dataset-identity guard passed) |
+| `make aws-athena` | `state=SUCCEEDED scanned=10143 bytes engine=534 ms total=638 ms estimated_cost=$0.000048`; `matches PostgreSQL: yes` |
+| `terraform apply destroy.tfplan` | `Apply complete! Resources: 0 added, 0 changed, 12 destroyed.`; `terraform state list` printed nothing |
+| `make aws-verify-teardown` | bucket, workgroup, Glue database and IAM role `absent`; `0 still tagged project=deliverypulse-aws-proof`; `teardown: all checks passed` |
+
+Athena result (late-delivery rate by city; identical in PostgreSQL):
+
+| City | Delivered | Late | Late rate |
+|---|---:|---:|---:|
+| Bengaluru | 1,158 | 74 | 0.0639 |
+| Chennai | 684 | 75 | 0.1096 |
+| Delhi | 893 | 77 | 0.0862 |
+| Hyderabad | 746 | 123 | 0.1649 |
+| Mumbai | 1,236 | 132 | 0.1068 |
+
+The totals (4,717 delivered, 481 late) equal the counts read from the demo's cleaned Parquet
+before the run. The query scanned 10,143 bytes but is billed at Athena's 10 MB minimum, so the
+estimate is `10 MiB / 1 TiB × USD 5 = USD 0.000048`. Credits before the run: USD 120.00,
+current month USD 0.00. **The billed amount after the run is still to be confirmed** from the
+console 24–48 hours later. Lake objects in this run were 7.3 MiB, smaller than the 50,000-order
+local lake above (57.5 MB), because this is the 5,000-order demo dataset.
+
+**Scope:** this proves the existing S3 code path and one Athena query against real AWS, with a
+least-privilege role and a verified teardown. It is not a production deployment, measures one
+query once, and leaves no AWS resources behind.
+
 ## Local Kubernetes: measured local run (2026-10-15)
 
 The approved demo uses the same 50,000-order seed-42 dataset and existing Compose PostgreSQL.

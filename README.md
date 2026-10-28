@@ -197,7 +197,8 @@ Image pulls that reuse cached layers are not cold downloads.
   and a bounded comparison, not a general database speed claim.
 - [Local Kubernetes](docs/decisions/kubernetes.md): restricted application pods, explicit
   infrastructure exception and staged disk checks.
-- [AWS deliberately skipped](docs/decisions/aws.md): local S3 evidence only.
+- [One-off AWS proof](docs/decisions/aws.md): Sydney, Free plan, short-lived credentials,
+  least-privilege role and a verified teardown; one scoped encryption exception.
 - [Dependency-age exceptions](docs/decisions/dependency-age-exceptions.md): security fixes
   adopted before the usual 14-day minimum, with the reasons and dates.
 
@@ -236,6 +237,13 @@ reconciliation, never to tell the production pipeline how to classify a record.
 - **Kubernetes:** the Job ran on kind and preserved all eight analytics tables. All three
   batches were already loaded and skipped; this does not prove first-time loading into an
   empty database.
+- **AWS (2026-10-28):** the 5,000-order demo lake (118 objects, 7.7 MB) was exported to S3 in
+  Sydney through the same S3 code path, and one Athena query (late-delivery rate by city)
+  matched PostgreSQL exactly: 10,143 bytes scanned, 638 ms, estimated USD 0.000048. All 12
+  Terraform resources were then destroyed and the teardown was verified
+  ([details](docs/benchmarks.md#5-aws-proof-s3-export-and-one-athena-query-2026-10-28)).
+
+![Athena query on S3 in Sydney: late-delivery rate by city, matching PostgreSQL](docs/images/athena-proof.png)
 
 [Full methodology, timings and plans](docs/benchmarks.md) ·
 [optional Kubernetes reproduction](k8s/README.md) · [service operations](docs/operations.md).
@@ -288,8 +296,10 @@ Actions use SHA pins; no cloud credentials are needed.
   excluded, so the project makes no "within 10 minutes" claim.
 - **Recording:** no demo video or GIF was made; the dashboard screenshot is the only visual
   artifact.
-- **AWS:** deliberately skipped. The local SeaweedFS S3 path is proven; an AWS endpoint change
-  is guarded by `S3_ALLOW_AWS`. No AWS account, keys or cost were used.
+- **AWS:** a single, owner-run proof: one export and one Athena query, run once, then
+  destroyed. It is not a production deployment and no AWS resources remain. The bucket uses
+  SSE-S3 rather than a paid KMS key (one scoped Trivy exception). The billed amount is to be
+  confirmed from the console.
 - **Batch storage cost:** for the historical 50,000-order dataset, PostgreSQL reported
   686 MB (PostgreSQL's binary-size display) versus 86,633,684 raw bytes:
   `686 × 1,048,576 / 86,633,684 ≈ 8.30`. This is derived arithmetic from a rounded

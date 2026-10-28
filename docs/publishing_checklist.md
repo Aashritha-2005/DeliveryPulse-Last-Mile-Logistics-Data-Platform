@@ -95,8 +95,10 @@ PR bodies. Binary screenshots and GIFs require the visual review above.
 - [ ] Lead with PostgreSQL, data quality and idempotency. Every number must map to a confirmed
   run with its dataset, command, date and hardware. The load time is not an end-to-end time.
 - [ ] State that Spark is a benchmark subset, Kafka is a local landing demo, MongoDB is
-  SSPL-licensed, Kubernetes demonstrates local replay, and AWS was deliberately skipped.
-- [ ] Do not imply Java, Hadoop/HDFS, cloud execution or production multi-node deployment.
+  SSPL-licensed, Kubernetes demonstrates local replay, and AWS was a single owner-run proof
+  (one S3 export and one Athena query in Sydney, then destroyed).
+- [ ] Do not imply Java, Hadoop/HDFS, ongoing cloud operation or production multi-node
+  deployment.
 - [ ] Prefer a few defensible resume bullets over listing unmeasured features. Keep the
   screenshot, architecture, data model, quality report and full query plans easy to find.
 - [ ] Review the final changed-file list and commit message yourself, then push. Do not blindly
