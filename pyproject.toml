@@ -39,7 +39,8 @@ streaming = [
     "confluent-kafka==2.16.0",
 ]
 nosql = [
-    # dnspython pinned: newer releases fail the 14-day rule when added (2026-10-15).
+    # dnspython pinned explicitly (pymongo allows >=2.7.0,<3). 2.9.0 (released 2026-10-09) was
+    # adopted on 2026-10-28, once it passed the 14-day rule.
     "dnspython==2.9.0",
     "pymongo==4.18.3",
 ]
