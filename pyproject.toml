@@ -42,7 +42,7 @@ nosql = [
     # dnspython pinned explicitly (pymongo allows >=2.7.0,<3). 2.9.0 (released 2026-10-09) was
     # adopted on 2026-10-28, once it passed the 14-day rule.
     "dnspython==2.9.0",
-    "pymongo==4.18.3",
+    "pymongo==4.19.0",
 ]
 
 [tool.uv]
